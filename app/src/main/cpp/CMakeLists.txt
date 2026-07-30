@@ -43,6 +43,8 @@ if(VXP_HAVE_UNICORN)
         jni_bridge.cpp
         unicorn_bridge.cpp
         memory.cpp
+        cpu_bridge.cpp
+        jni_cpu_bridge.cpp
     )
 endif()
 
