@@ -3,10 +3,12 @@ package com.nokia.vxp
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.text.method.ScrollingMovementMethod
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.nokia.vxp.loader.LoadResult
 import com.nokia.vxp.loader.VxpLoader
@@ -43,11 +45,33 @@ class MainActivity : AppCompatActivity() {
                 }
                 is LoadResult.Failure -> {
                     selectedVxpUri = null
-                    Toast.makeText(this, "Rejected: ${result.reason}", Toast.LENGTH_LONG).show()
+                    showRejectionDialog(result.reason)
                     findViewById<Button>(R.id.btnLaunchEmulator).isEnabled = false
                 }
             }
         }
+    }
+
+    /**
+     * Rejection reasons can now include a hex/ascii dump of the file's first
+     * bytes (see VxpValidator), which is too long/unreadable for a Toast and
+     * needs to be copyable so it can be pasted elsewhere when updating
+     * Constants.kt. setTextIsSelectable + a monospace-ish scroll view keeps
+     * it legible.
+     */
+    private fun showRejectionDialog(reason: String) {
+        val textView = TextView(this).apply {
+            text = reason
+            setPadding(48, 32, 48, 32)
+            textSize = 13f
+            setTextIsSelectable(true)
+            movementMethod = ScrollingMovementMethod.getInstance()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("File rejected")
+            .setView(textView)
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
