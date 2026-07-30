@@ -1,0 +1,18 @@
+workflows:
+  android-debug-workflow:
+    name: ASD TechCreation Admin - Debug Build
+    max_build_duration: 60
+
+    environment:
+      java: 17
+      vars:
+        PACKAGE_NAME: "com.ecommerce.asdtechcreationadmin"
+
+    scripts:
+      - name: Build Debug APK
+        script: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+
+    artifacts:
+      - app/build/outputs/**/*.apk

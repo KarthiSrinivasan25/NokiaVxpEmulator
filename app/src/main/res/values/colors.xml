@@ -1,0 +1,10 @@
+<resources>
+    <!-- Nokia-ish palette: deep blue-black shell, classic LCD green accent -->
+    <color name="vxp_background">#0E1116</color>
+    <color name="vxp_surface">#171B22</color>
+    <color name="vxp_primary">#3DDC84</color>
+    <color name="vxp_primary_dark">#1FA85C</color>
+    <color name="vxp_on_surface">#E6E6E6</color>
+    <color name="vxp_lcd_green">#9BBB0F</color>
+    <color name="vxp_lcd_dark">#0F380F</color>
+</resources>

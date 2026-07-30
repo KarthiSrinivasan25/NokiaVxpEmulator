@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/vxp_background"
+    android:orientation="vertical">
+
+    <!--
+        This FrameLayout is where graphics.EmulatorSurfaceView will be
+        added programmatically once the graphics module is implemented.
+        Kept as a plain container here so the layout stays valid without
+        depending on classes that don't exist yet.
+    -->
+    <FrameLayout
+        android:id="@+id/frameEmulatorSurface"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="0.62"
+        android:background="@color/vxp_lcd_dark">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:padding="24dp"
+            android:gravity="center"
+            android:text="@string/emulator_placeholder"
+            android:textColor="@color/vxp_lcd_green"
+            android:textSize="13sp" />
+
+    </FrameLayout>
+
+    <!--
+        Placeholder for input.VirtualKeypadView (Nokia 12-key layout),
+        added programmatically once the input module exists.
+    -->
+    <FrameLayout
+        android:id="@+id/frameVirtualKeypad"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="0.38"
+        android:background="@color/vxp_surface"
+        tools:ignore="UselessParent" />
+
+</LinearLayout>

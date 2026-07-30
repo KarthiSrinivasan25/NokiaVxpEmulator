@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vector placeholder standing in for assets/boot_logo.png until real art is added -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="140dp"
+    android:height="140dp"
+    android:viewportWidth="140"
+    android:viewportHeight="140">
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M20,20 L120,20 L120,120 L20,120 Z" />
+    <path
+        android:fillColor="#0E1116"
+        android:pathData="M35,55 L70,90 L105,55 L95,45 L70,70 L45,45 Z" />
+</vector>

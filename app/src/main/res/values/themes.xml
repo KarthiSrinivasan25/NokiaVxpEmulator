@@ -1,0 +1,16 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Theme.NokiaVxpEmulator" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/vxp_primary</item>
+        <item name="colorPrimaryDark">@color/vxp_primary_dark</item>
+        <item name="colorAccent">@color/vxp_primary</item>
+        <item name="android:windowBackground">@color/vxp_background</item>
+        <item name="android:navigationBarColor">@color/vxp_background</item>
+        <item name="android:statusBarColor">@color/vxp_background</item>
+    </style>
+
+    <style name="Theme.NokiaVxpEmulator.Splash" parent="Theme.NokiaVxpEmulator">
+        <item name="android:windowFullscreen">true</item>
+    </style>
+
+</resources>

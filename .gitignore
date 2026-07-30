@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+app/build/
+*.iml
+
+# Local config
+local.properties
+
+# Android Studio
+.idea/
+*.hprof
+.cxx/
+captures/
+
+# CMake / native build artifacts
+external/unicorn/build/
+app/.cxx/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
