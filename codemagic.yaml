@@ -1,12 +1,12 @@
 workflows:
   android-debug-workflow:
-    name: ASD TechCreation Admin - Debug Build
+    name: NokiaVxpEmulator - Debug Build
     max_build_duration: 60
 
     environment:
       java: 17
       vars:
-        PACKAGE_NAME: "com.ecommerce.asdtechcreationadmin"
+        PACKAGE_NAME: "com.nokia.vxp"
 
     scripts:
       - name: Build Debug APK
