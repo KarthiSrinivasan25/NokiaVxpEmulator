@@ -28,17 +28,17 @@ object FontRenderer {
 
     // Standard 7-segment on/off patterns per digit: a,b,c,d,e,f,g
     private val DIGIT_SEGMENTS: Map<Char, BooleanArray> = mapOf(
-        '0' to boolArrayOf(true, true, true, true, true, true, false),
-        '1' to boolArrayOf(false, true, true, false, false, false, false),
-        '2' to boolArrayOf(true, true, false, true, true, false, true),
-        '3' to boolArrayOf(true, true, true, true, false, false, true),
-        '4' to boolArrayOf(false, true, true, false, false, true, true),
-        '5' to boolArrayOf(true, false, true, true, false, true, true),
-        '6' to boolArrayOf(true, false, true, true, true, true, true),
-        '7' to boolArrayOf(true, true, true, false, false, false, false),
-        '8' to boolArrayOf(true, true, true, true, true, true, true),
-        '9' to boolArrayOf(true, true, true, true, false, true, true)
-    )
+    '0' to booleanArrayOf(true, true, true, true, true, true, false),
+    '1' to booleanArrayOf(false, true, true, false, false, false, false),
+    '2' to booleanArrayOf(true, true, false, true, true, false, true),
+    '3' to booleanArrayOf(true, true, true, true, false, false, true),
+    '4' to booleanArrayOf(false, true, true, false, false, true, true),
+    '5' to booleanArrayOf(true, false, true, true, false, true, true),
+    '6' to booleanArrayOf(true, false, true, true, true, true, true),
+    '7' to booleanArrayOf(true, true, true, false, false, false, false),
+    '8' to booleanArrayOf(true, true, true, true, true, true, true),
+    '9' to booleanArrayOf(true, true, true, true, false, true, true)
+)
 
     /** Draws [text] with the top-left of the first glyph at ([x], [y]). Each unscaled pixel is drawn as a [scale]x[scale] block. */
     fun drawText(target: FrameBuffer, x: Int, y: Int, text: String, argbColor: Int, scale: Int = 1) {
