@@ -51,7 +51,8 @@ object VxpValidator {
                 "Not a recognized VXP file (magic bytes don't match).\n" +
                     "Expected: ${Constants.VXP_MAGIC.toHex()} (\"VXP1\")\n" +
                     "Got:      ${magic.toHex()}\n\n" +
-                    "First $dumpLen bytes of this file:\n$hexDump\n$asciiDump\n\n" +
+                    "First $dumpLen bytes (after zlib decompression, if the file was compressed):\n" +
+                    "$hexDump\n$asciiDump\n\n" +
                     "Constants.VXP_MAGIC / the header offsets in Constants.kt are a " +
                     "placeholder guess and likely need updating to match this file's " +
                     "real format - update VXP_MAGIC (and re-check OFFSET_* if the " +
