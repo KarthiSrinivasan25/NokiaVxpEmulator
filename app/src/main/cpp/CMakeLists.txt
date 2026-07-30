@@ -20,35 +20,50 @@ set(UNICORN_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
 
 if(EXISTS ${UNICORN_DIR}/CMakeLists.txt)
     add_subdirectory(${UNICORN_DIR} ${CMAKE_CURRENT_BINARY_DIR}/unicorn-build)
+    set(VXP_HAVE_UNICORN TRUE)
 else()
     message(WARNING
         "external/unicorn not found at ${UNICORN_DIR} - "
         "clone https://github.com/unicorn-engine/unicorn into external/unicorn "
-        "before building the CPU/emulator modules. native-lib scaffold will "
-        "still build without it for now.")
+        "before building. memory.cpp/unicorn_bridge.cpp/jni_bridge.cpp depend on "
+        "<unicorn/unicorn.h> and will be EXCLUDED from this build until then; "
+        "only the native-lib.cpp scaffold will be compiled.")
+    set(VXP_HAVE_UNICORN FALSE)
 endif()
 
 # ---------------------------------------------------------------------------
-# Our native sources. Only native-lib.cpp exists at this scaffolding stage;
-# the rest are added to this list as each module (memory, loader, graphics,
-# audio, input, mre, arm interpreter, unicorn bridge) gets implemented.
+# Our native sources. The Unicorn-dependent files are only compiled once
+# external/unicorn is actually present (see above), so a fresh checkout
+# without the submodule still configures and builds successfully.
 # ---------------------------------------------------------------------------
+set(VXP_SOURCES native-lib.cpp)
+
+if(VXP_HAVE_UNICORN)
+    list(APPEND VXP_SOURCES
+        jni_bridge.cpp
+        unicorn_bridge.cpp
+        memory.cpp
+    )
+endif()
+
 add_library(
         vxpnative
         SHARED
-        native-lib.cpp
+        ${VXP_SOURCES}
 )
 
-target_include_directories(
-        vxpnative
-        PRIVATE
-        ${UNICORN_DIR}/include
-)
+if(VXP_HAVE_UNICORN)
+    target_include_directories(
+            vxpnative
+            PRIVATE
+            ${UNICORN_DIR}/include
+    )
+endif()
 
 find_library(log-lib log)
 find_library(android-lib android)
 
-if(TARGET unicorn)
+if(VXP_HAVE_UNICORN AND TARGET unicorn)
     target_link_libraries(vxpnative unicorn ${log-lib} ${android-lib})
 else()
     target_link_libraries(vxpnative ${log-lib} ${android-lib})
