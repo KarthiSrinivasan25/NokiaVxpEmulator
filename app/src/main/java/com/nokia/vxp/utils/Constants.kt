@@ -29,6 +29,12 @@ object Constants {
     const val OFFSET_RESOURCE_TABLE_OFFSET = 24
     const val OFFSET_RESOURCE_COUNT = 28
 
+    // --- Emulated screen defaults (graphics/ module) ---------------------
+    // 128x160 was a common Nokia S40-era color-LCD resolution for
+    // MRE/VXP-capable devices; adjust per real target device once known.
+    const val DEFAULT_SCREEN_WIDTH = 128
+    const val DEFAULT_SCREEN_HEIGHT = 160
+
     // --- Emulated memory map defaults (memory/ module will consume this) --
     const val DEFAULT_CODE_BASE = 0x00010000L
     const val DEFAULT_DATA_BASE = 0x00400000L
