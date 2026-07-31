@@ -36,27 +36,11 @@ object VxpValidator {
             Constants.OFFSET_MAGIC + Constants.VXP_MAGIC.size
         )
         if (!magic.contentEquals(Constants.VXP_MAGIC)) {
-            // Dump the first chunk of the real file so the actual header layout
-            // is visible right in the rejection message, not just logcat. This is
-            // the fastest way to reverse-engineer the true magic/offsets from a
-            // real sample instead of guessing again.
-            val dumpLen = minOf(bytes.size, 64)
-            val hexDump = bytes.copyOfRange(0, dumpLen).toHex()
-            val asciiDump = bytes.copyOfRange(0, dumpLen).toAscii()
-
             Logger.w(TAG, "Magic mismatch: expected ${Constants.VXP_MAGIC.toHex()}, got ${magic.toHex()}")
-            Logger.w(TAG, "First $dumpLen bytes: $hexDump")
-
             return ValidationResult.Failed(
-                "Not a recognized VXP file (magic bytes don't match).\n" +
-                    "Expected: ${Constants.VXP_MAGIC.toHex()} (\"VXP1\")\n" +
-                    "Got:      ${magic.toHex()}\n\n" +
-                    "First $dumpLen bytes (after zlib decompression, if the file was compressed):\n" +
-                    "$hexDump\n$asciiDump\n\n" +
-                    "Constants.VXP_MAGIC / the header offsets in Constants.kt are a " +
-                    "placeholder guess and likely need updating to match this file's " +
-                    "real format - update VXP_MAGIC (and re-check OFFSET_* if the " +
-                    "layout differs) once you know the real values from the dump above."
+                "Not a recognized VXP file (magic bytes don't match). " +
+                    "If you're sure this is a valid .vxp, the magic constant in " +
+                    "Constants.kt likely needs updating for this VXP format version."
             )
         }
 
@@ -93,9 +77,4 @@ object VxpValidator {
     }
 
     private fun ByteArray.toHex(): String = joinToString(" ") { "%02X".format(it) }
-
-    private fun ByteArray.toAscii(): String = joinToString("") { b ->
-        val c = b.toInt().toChar()
-        if (c.code in 32..126) c.toString() else "."
-    }
 }

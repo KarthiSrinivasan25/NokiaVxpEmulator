@@ -2,19 +2,13 @@ package com.nokia.vxp.loader
 
 import com.nokia.vxp.utils.Constants
 import com.nokia.vxp.utils.Logger
-import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.zip.DataFormatException
-import java.util.zip.Inflater
 
 private const val TAG = "VxpParser"
 
 /** Resource table entry byte layout, TODO verify against real samples. */
 private const val RESOURCE_ENTRY_SIZE = 16 // id:4, typeId:4, offset:4, size:4
-
-/** Cap on decompressed size, mirrors Constants.VXP_MAX_REASONABLE_FILE_SIZE as a safety net. */
-private const val MAX_INFLATED_SIZE = 32L * 1024 * 1024
 
 sealed class ParseResult {
     data class Success(val file: VxpFile) : ParseResult()
@@ -28,30 +22,7 @@ sealed class ParseResult {
  */
 object VxpParser {
 
-    fun parse(sourceName: String, rawBytes: ByteArray): ParseResult {
-        // Real .vxp files are zlib-compressed containers - the actual
-        // "VXP1"-style header lives inside the decompressed payload, not at
-        // offset 0 of the raw file. Confirmed from a real sample: raw bytes
-        // start with 78 DA, the standard zlib header for "best compression"
-        // (CMF/FLG checksum divisible by 31). If we detect that, inflate
-        // first and parse the decompressed bytes instead.
-        val bytes: ByteArray
-        if (looksLikeZlib(rawBytes)) {
-            val inflated = try {
-                inflateZlib(rawBytes)
-            } catch (e: DataFormatException) {
-                Logger.e(TAG, "zlib header present but inflate failed", e)
-                return ParseResult.Failure(
-                    "File has a zlib header but failed to decompress: ${e.message}. " +
-                        "It may be truncated or use a non-zlib DEFLATE variant."
-                )
-            }
-            Logger.i(TAG, "Inflated zlib container: ${rawBytes.size}B -> ${inflated.size}B")
-            bytes = inflated
-        } else {
-            bytes = rawBytes
-        }
-
+    fun parse(sourceName: String, bytes: ByteArray): ParseResult {
         val rawCheck = VxpValidator.validateRaw(bytes)
         if (rawCheck is ValidationResult.Failed) {
             return ParseResult.Failure(rawCheck.reason)
@@ -102,39 +73,6 @@ object VxpParser {
                 rawSize = bytes.size.toLong()
             )
         )
-    }
-
-    /** zlib header: first byte 0x78 (deflate, 32K window) and CMF/FLG checksum divisible by 31. */
-    private fun looksLikeZlib(bytes: ByteArray): Boolean {
-        if (bytes.size < 2) return false
-        val cmf = bytes[0].toInt() and 0xFF
-        val flg = bytes[1].toInt() and 0xFF
-        if (cmf and 0x0F != 8) return false // compression method must be 8 (deflate)
-        return (cmf * 256 + flg) % 31 == 0
-    }
-
-    private fun inflateZlib(bytes: ByteArray): ByteArray {
-        val inflater = Inflater() // nowrap=false: expects the zlib header/trailer
-        inflater.setInput(bytes)
-        val out = ByteArrayOutputStream(bytes.size * 3)
-        val chunk = ByteArray(8192)
-        try {
-            while (!inflater.finished()) {
-                val n = inflater.inflate(chunk)
-                if (n == 0) {
-                    if (inflater.needsInput() || inflater.needsDictionary()) break
-                }
-                out.write(chunk, 0, n)
-                if (out.size() > MAX_INFLATED_SIZE) {
-                    throw DataFormatException(
-                        "Decompressed data exceeds sanity cap of $MAX_INFLATED_SIZE bytes"
-                    )
-                }
-            }
-        } finally {
-            inflater.end()
-        }
-        return out.toByteArray()
     }
 
     private fun readHeader(buffer: ByteBuffer): VxpHeader {
