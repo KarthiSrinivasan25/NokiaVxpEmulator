@@ -1,49 +1,28 @@
 package com.nokia.vxp.loader
 
 /**
- * Parsed VXP file header. Field layout is defined in utils.Constants and
- * is best-effort pending verification against real sample files.
+ * Parsed ELF32 header (Elf32_Ehdr) fields relevant to loading a VXP/MRE
+ * module. Field layout is the standard, publicly documented ELF spec -
+ * see utils.Constants for the byte offsets.
  */
 data class VxpHeader(
-    val magic: ByteArray,
-    val versionMajor: Int,
-    val versionMinor: Int,
-    val flags: Int,
-    val codeOffset: Long,
-    val codeSize: Long,
-    val dataOffset: Long,
-    val dataSize: Long,
-    val resourceTableOffset: Long,
-    val resourceCount: Int
+    val elfType: Int,
+    val machine: Int,
+    val version: Long,
+    val entryPoint: Long,
+    val programHeaderOffset: Long,
+    val programHeaderEntrySize: Int,
+    val programHeaderCount: Int,
+    val sectionHeaderOffset: Long,
+    val sectionHeaderEntrySize: Int,
+    val sectionHeaderCount: Int,
+    val sectionHeaderStringTableIndex: Int
 ) {
-    val version: String get() = "$versionMajor.$versionMinor"
+    /** Whether the entry point's low bit marks Thumb-mode execution (standard ARM interworking convention). */
+    val isThumbEntry: Boolean get() = (entryPoint and 1L) == 1L
 
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is VxpHeader) return false
-        return magic.contentEquals(other.magic) &&
-            versionMajor == other.versionMajor &&
-            versionMinor == other.versionMinor &&
-            flags == other.flags &&
-            codeOffset == other.codeOffset &&
-            codeSize == other.codeSize &&
-            dataOffset == other.dataOffset &&
-            dataSize == other.dataSize &&
-            resourceTableOffset == other.resourceTableOffset &&
-            resourceCount == other.resourceCount
-    }
+    /** entryPoint with the Thumb marker bit masked off - the actual address to set PC to. */
+    val realEntryAddress: Long get() = entryPoint and 1L.inv()
 
-    override fun hashCode(): Int {
-        var result = magic.contentHashCode()
-        result = 31 * result + versionMajor
-        result = 31 * result + versionMinor
-        result = 31 * result + flags
-        result = 31 * result + codeOffset.hashCode()
-        result = 31 * result + codeSize.hashCode()
-        result = 31 * result + dataOffset.hashCode()
-        result = 31 * result + dataSize.hashCode()
-        result = 31 * result + resourceTableOffset.hashCode()
-        result = 31 * result + resourceCount
-        return result
-    }
+    val displayVersion: String get() = "ELF32/ARM"
 }

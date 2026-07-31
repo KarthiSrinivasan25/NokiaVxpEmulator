@@ -2,6 +2,7 @@ package com.nokia.vxp.emulator
 
 import com.nokia.vxp.cpu.CpuState
 import com.nokia.vxp.cpu.Executor
+import com.nokia.vxp.cpu.Flags
 import com.nokia.vxp.loader.LoadResult
 import com.nokia.vxp.memory.MemoryManager
 import com.nokia.vxp.utils.Logger
@@ -38,6 +39,15 @@ class Runtime private constructor(
                 entryPoint = loadResult.memoryLayout.entryPoint,
                 initialSp = memoryManager.stack.initialStackPointer
             )
+            if (loadResult.memoryLayout.isThumbEntry) {
+                // ELF entry point had its low bit set - standard ARM
+                // interworking convention for "this code starts in Thumb
+                // state". Set CPSR's T bit so Unicorn decodes correctly
+                // from the very first instruction.
+                val cpsrWithThumb = Flags.withBit(cpuState.getCpsr(), Flags.BIT_T, true)
+                cpuState.setCpsr(cpsrWithThumb)
+                Logger.i(TAG, "Entry point is Thumb-mode - set CPSR T bit")
+            }
 
             val executor = Executor(memoryManager, cpuState)
             return Runtime(memoryManager, cpuState, executor)

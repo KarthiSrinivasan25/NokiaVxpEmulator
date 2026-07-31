@@ -57,7 +57,7 @@ class Emulator(private val config: EmulatorConfig = EmulatorConfig()) {
                     onFault = { reason -> callback.onFault(reason) }
                 )
 
-                callback.onLoaded("VXP v${result.vxpFile.header.version}")
+                callback.onLoaded("VXP (ELF, entry=0x${result.memoryLayout.entryPoint.toString(16)})")
             }
         }
     }

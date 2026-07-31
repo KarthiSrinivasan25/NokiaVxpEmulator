@@ -6,9 +6,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 private const val TAG = "VxpParser"
-
-/** Resource table entry byte layout, TODO verify against real samples. */
-private const val RESOURCE_ENTRY_SIZE = 16 // id:4, typeId:4, offset:4, size:4
+private const val TAG_HEADER_SIZE = 8 // id:4, size:4
 
 sealed class ParseResult {
     data class Success(val file: VxpFile) : ParseResult()
@@ -16,9 +14,10 @@ sealed class ParseResult {
 }
 
 /**
- * Pure byte-buffer parser: turns raw file bytes into a VxpFile. Doesn't
- * touch storage/IO itself (VxpLoader does that) so this class stays easy
- * to unit test with byte arrays built by hand or captured from samples.
+ * Parses already-unwrapped ELF bytes (VxpLoader handles zlib/ZIP
+ * unwrapping before calling this) into a VxpFile: ELF header, program
+ * headers, section headers, the .vm_res section if present, and any
+ * MediaTek metadata tags appended after the ELF data.
  */
 object VxpParser {
 
@@ -33,8 +32,8 @@ object VxpParser {
         val header = try {
             readHeader(buffer)
         } catch (e: Exception) {
-            Logger.e(TAG, "Exception while reading header", e)
-            return ParseResult.Failure("Malformed header: ${e.message}")
+            Logger.e(TAG, "Exception while reading ELF header", e)
+            return ParseResult.Failure("Malformed ELF header: ${e.message}")
         }
 
         val headerCheck = VxpValidator.validateHeader(header, bytes.size.toLong())
@@ -42,111 +41,219 @@ object VxpParser {
             return ParseResult.Failure(headerCheck.reason)
         }
 
-        val code = bytes.copyOfRange(
-            header.codeOffset.toInt(),
-            (header.codeOffset + header.codeSize).toInt()
-        )
-        val data = bytes.copyOfRange(
-            header.dataOffset.toInt(),
-            (header.dataOffset + header.dataSize).toInt()
-        )
-
-        val resources = try {
-            readResourceTable(buffer, header, bytes.size)
+        val programHeaders = try {
+            readProgramHeaders(buffer, header, bytes.size.toLong())
         } catch (e: Exception) {
-            Logger.e(TAG, "Exception while reading resource table", e)
-            return ParseResult.Failure("Malformed resource table: ${e.message}")
+            Logger.e(TAG, "Exception while reading program headers", e)
+            return ParseResult.Failure("Malformed program headers: ${e.message}")
         }
+        for ((index, ph) in programHeaders.withIndex()) {
+            val check = VxpValidator.validateProgramHeader(ph, index, bytes.size.toLong())
+            if (check is ValidationResult.Failed) return ParseResult.Failure(check.reason)
+        }
+
+        val sectionHeaders = try {
+            readSectionHeaders(buffer, bytes, header)
+        } catch (e: Exception) {
+            Logger.w(TAG, "Exception while reading section headers (continuing without them): ${e.message}")
+            emptyList()
+        }
+
+        val resourceSectionData = sectionHeaders
+            .firstOrNull { it.name == Constants.VM_RES_SECTION_NAME }
+            ?.let { section ->
+                if (section.offset + section.size <= bytes.size) {
+                    bytes.copyOfRange(section.offset.toInt(), (section.offset + section.size).toInt())
+                } else {
+                    Logger.w(TAG, "${Constants.VM_RES_SECTION_NAME} section extends past EOF - skipping")
+                    null
+                }
+            }
+
+        val elfEndOffset = computeElfEndOffset(header, programHeaders, sectionHeaders, bytes.size.toLong())
+        val tags = readTags(bytes, elfEndOffset)
 
         Logger.i(
             TAG,
-            "Parsed VXP OK: version=${header.version} code=${code.size}B data=${data.size}B resources=${resources.size}"
+            "Parsed VXP OK: entry=0x${header.entryPoint.toString(16)} " +
+                "segments=${programHeaders.count { it.isLoadable }} " +
+                "vm_res=${resourceSectionData?.size ?: 0}B tags=${tags.size}"
         )
 
         return ParseResult.Success(
             VxpFile(
                 sourceName = sourceName,
                 header = header,
-                code = code,
-                data = data,
-                resources = resources,
+                programHeaders = programHeaders,
+                sectionHeaders = sectionHeaders,
+                elfBytes = bytes,
+                resourceSectionData = resourceSectionData,
+                tags = tags,
                 rawSize = bytes.size.toLong()
             )
         )
     }
 
     private fun readHeader(buffer: ByteBuffer): VxpHeader {
-        val magic = ByteArray(Constants.VXP_MAGIC.size)
-        buffer.position(Constants.OFFSET_MAGIC)
-        buffer.get(magic)
+        buffer.position(Constants.OFFSET_E_TYPE)
+        val elfType = buffer.short.toInt() and 0xFFFF
 
-        buffer.position(Constants.OFFSET_VERSION)
-        val versionRaw = buffer.short.toInt() and 0xFFFF
-        val versionMajor = (versionRaw shr 8) and 0xFF
-        val versionMinor = versionRaw and 0xFF
+        buffer.position(Constants.OFFSET_E_MACHINE)
+        val machine = buffer.short.toInt() and 0xFFFF
 
-        buffer.position(Constants.OFFSET_FLAGS)
-        val flags = buffer.short.toInt() and 0xFFFF
+        buffer.position(Constants.OFFSET_E_VERSION)
+        val version = buffer.int.toLong() and 0xFFFFFFFFL
 
-        buffer.position(Constants.OFFSET_CODE_OFFSET)
-        val codeOffset = buffer.int.toLong() and 0xFFFFFFFFL
+        buffer.position(Constants.OFFSET_E_ENTRY)
+        val entry = buffer.int.toLong() and 0xFFFFFFFFL
 
-        buffer.position(Constants.OFFSET_CODE_SIZE)
-        val codeSize = buffer.int.toLong() and 0xFFFFFFFFL
+        buffer.position(Constants.OFFSET_E_PHOFF)
+        val phOff = buffer.int.toLong() and 0xFFFFFFFFL
 
-        buffer.position(Constants.OFFSET_DATA_OFFSET)
-        val dataOffset = buffer.int.toLong() and 0xFFFFFFFFL
+        buffer.position(Constants.OFFSET_E_SHOFF)
+        val shOff = buffer.int.toLong() and 0xFFFFFFFFL
 
-        buffer.position(Constants.OFFSET_DATA_SIZE)
-        val dataSize = buffer.int.toLong() and 0xFFFFFFFFL
+        buffer.position(Constants.OFFSET_E_PHENTSIZE)
+        val phEntSize = buffer.short.toInt() and 0xFFFF
 
-        buffer.position(Constants.OFFSET_RESOURCE_TABLE_OFFSET)
-        val resourceTableOffset = buffer.int.toLong() and 0xFFFFFFFFL
+        buffer.position(Constants.OFFSET_E_PHNUM)
+        val phNum = buffer.short.toInt() and 0xFFFF
 
-        buffer.position(Constants.OFFSET_RESOURCE_COUNT)
-        val resourceCount = buffer.int
+        buffer.position(Constants.OFFSET_E_SHENTSIZE)
+        val shEntSize = buffer.short.toInt() and 0xFFFF
+
+        buffer.position(Constants.OFFSET_E_SHNUM)
+        val shNum = buffer.short.toInt() and 0xFFFF
+
+        buffer.position(Constants.OFFSET_E_SHSTRNDX)
+        val shStrNdx = buffer.short.toInt() and 0xFFFF
 
         return VxpHeader(
-            magic = magic,
-            versionMajor = versionMajor,
-            versionMinor = versionMinor,
-            flags = flags,
-            codeOffset = codeOffset,
-            codeSize = codeSize,
-            dataOffset = dataOffset,
-            dataSize = dataSize,
-            resourceTableOffset = resourceTableOffset,
-            resourceCount = resourceCount
+            elfType = elfType,
+            machine = machine,
+            version = version,
+            entryPoint = entry,
+            programHeaderOffset = phOff,
+            programHeaderEntrySize = phEntSize,
+            programHeaderCount = phNum,
+            sectionHeaderOffset = shOff,
+            sectionHeaderEntrySize = shEntSize,
+            sectionHeaderCount = shNum,
+            sectionHeaderStringTableIndex = shStrNdx
         )
     }
 
-    private fun readResourceTable(
-        buffer: ByteBuffer,
-        header: VxpHeader,
-        totalFileSize: Int
-    ): List<VxpResourceEntry> {
-        if (header.resourceCount == 0) return emptyList()
-
-        val entries = ArrayList<VxpResourceEntry>(header.resourceCount)
-        var pos = header.resourceTableOffset.toInt()
-
-        repeat(header.resourceCount) { index ->
-            val entryEnd = pos + RESOURCE_ENTRY_SIZE
-            if (entryEnd > totalFileSize) {
-                throw IllegalStateException(
-                    "Resource entry #$index would read past end of file (offset=$pos)"
-                )
+    private fun readProgramHeaders(buffer: ByteBuffer, header: VxpHeader, totalSize: Long): List<ElfProgramHeader> {
+        val result = ArrayList<ElfProgramHeader>(header.programHeaderCount)
+        for (i in 0 until header.programHeaderCount) {
+            val base = header.programHeaderOffset + i.toLong() * header.programHeaderEntrySize
+            if (base + Constants.PROGRAM_HEADER_SIZE > totalSize) {
+                throw IllegalStateException("Program header #$i at offset $base extends past EOF")
             }
-            buffer.position(pos)
-            val id = buffer.int
-            val typeId = buffer.int
+            buffer.position(base.toInt())
+            val type = buffer.int
+            val offset = buffer.int.toLong() and 0xFFFFFFFFL
+            val vaddr = buffer.int.toLong() and 0xFFFFFFFFL
+            val paddr = buffer.int.toLong() and 0xFFFFFFFFL
+            val fileSize = buffer.int.toLong() and 0xFFFFFFFFL
+            val memSize = buffer.int.toLong() and 0xFFFFFFFFL
+            val flags = buffer.int
+            val align = buffer.int.toLong() and 0xFFFFFFFFL
+
+            result += ElfProgramHeader(type, offset, vaddr, paddr, fileSize, memSize, flags, align)
+        }
+        return result
+    }
+
+    private fun readSectionHeaders(buffer: ByteBuffer, bytes: ByteArray, header: VxpHeader): List<ElfSectionHeader> {
+        if (header.sectionHeaderCount == 0) return emptyList()
+
+        data class RawSection(
+            val nameOffset: Int, val type: Int, val flags: Long, val addr: Long,
+            val offset: Long, val size: Long, val link: Int, val info: Int,
+            val addrAlign: Long, val entSize: Long
+        )
+
+        val raw = ArrayList<RawSection>(header.sectionHeaderCount)
+        for (i in 0 until header.sectionHeaderCount) {
+            val base = header.sectionHeaderOffset + i.toLong() * header.sectionHeaderEntrySize
+            buffer.position(base.toInt())
+            val nameOffset = buffer.int
+            val type = buffer.int
+            val flags = buffer.int.toLong() and 0xFFFFFFFFL
+            val addr = buffer.int.toLong() and 0xFFFFFFFFL
             val offset = buffer.int.toLong() and 0xFFFFFFFFL
             val size = buffer.int.toLong() and 0xFFFFFFFFL
-
-            entries += VxpResourceEntry(id, typeId, offset, size)
-            pos = entryEnd
+            val link = buffer.int
+            val info = buffer.int
+            val addrAlign = buffer.int.toLong() and 0xFFFFFFFFL
+            val entSize = buffer.int.toLong() and 0xFFFFFFFFL
+            raw += RawSection(nameOffset, type, flags, addr, offset, size, link, info, addrAlign, entSize)
         }
 
-        return entries
+        // Resolve names via the section header string table (.shstrtab),
+        // itself just another section pointed to by e_shstrndx.
+        val shstrtab = raw.getOrNull(header.sectionHeaderStringTableIndex)
+        return raw.map { section ->
+            val name = shstrtab?.let { readNullTerminatedString(bytes, (it.offset + section.nameOffset).toInt()) } ?: ""
+            ElfSectionHeader(
+                name = name,
+                type = section.type,
+                flags = section.flags,
+                addr = section.addr,
+                offset = section.offset,
+                size = section.size,
+                link = section.link,
+                info = section.info,
+                addrAlign = section.addrAlign,
+                entSize = section.entSize
+            )
+        }
+    }
+
+    private fun readNullTerminatedString(bytes: ByteArray, startOffset: Int): String {
+        if (startOffset < 0 || startOffset >= bytes.size) return ""
+        var end = startOffset
+        while (end < bytes.size && bytes[end] != 0.toByte()) end++
+        return String(bytes, startOffset, end - startOffset, Charsets.US_ASCII)
+    }
+
+    /** Where the ELF's own data (header + program/section header tables + section contents) ends, so tag-parsing knows where to start looking. */
+    private fun computeElfEndOffset(
+        header: VxpHeader,
+        programHeaders: List<ElfProgramHeader>,
+        sectionHeaders: List<ElfSectionHeader>,
+        totalSize: Long
+    ): Long {
+        var end = Constants.ELF_HEADER_SIZE.toLong()
+        end = maxOf(end, header.programHeaderOffset + header.programHeaderCount.toLong() * header.programHeaderEntrySize)
+        end = maxOf(end, header.sectionHeaderOffset + header.sectionHeaderCount.toLong() * header.sectionHeaderEntrySize)
+        for (ph in programHeaders) end = maxOf(end, ph.offset + ph.fileSize)
+        for (sh in sectionHeaders) end = maxOf(end, sh.offset + sh.size)
+        return end.coerceAtMost(totalSize)
+    }
+
+    /** Best-effort: reads id+size+data tags until EOF or a tag that doesn't fit; never throws, since tags are optional metadata. */
+    private fun readTags(bytes: ByteArray, startOffset: Long): List<VxpTag> {
+        val tags = mutableListOf<VxpTag>()
+        var pos = startOffset
+
+        while (pos + TAG_HEADER_SIZE <= bytes.size) {
+            val buffer = ByteBuffer.wrap(bytes, pos.toInt(), TAG_HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+            val id = buffer.int
+            val size = buffer.int.toLong() and 0xFFFFFFFFL
+
+            val dataStart = pos + TAG_HEADER_SIZE
+            if (size < 0 || dataStart + size > bytes.size) {
+                Logger.w(TAG, "Stopping tag scan at offset $pos - tag claims size=$size, doesn't fit remaining ${bytes.size - dataStart} bytes")
+                break
+            }
+
+            val data = bytes.copyOfRange(dataStart.toInt(), (dataStart + size).toInt())
+            tags += VxpTag(id, data)
+            pos = dataStart + size
+        }
+
+        return tags
     }
 }

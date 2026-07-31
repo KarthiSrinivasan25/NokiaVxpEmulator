@@ -35,8 +35,9 @@ class MainActivity : AppCompatActivity() {
                     selectedVxpUri = uri
                     Toast.makeText(
                         this,
-                        "Loaded OK: v${result.vxpFile.header.version}, " +
-                            "${result.vxpFile.resources.size} resources",
+                        "Loaded OK: ${result.vxpFile.header.displayVersion}, " +
+                            "entry=0x${result.memoryLayout.entryPoint.toString(16)}, " +
+                            "${result.vxpFile.tags.size} tags",
                         Toast.LENGTH_LONG
                     ).show()
                     findViewById<Button>(R.id.btnLaunchEmulator).isEnabled = true
