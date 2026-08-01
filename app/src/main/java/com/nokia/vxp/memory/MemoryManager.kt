@@ -135,3 +135,4 @@ class MemoryManager : GuestMemoryReader {
         }
     }
 }
+
