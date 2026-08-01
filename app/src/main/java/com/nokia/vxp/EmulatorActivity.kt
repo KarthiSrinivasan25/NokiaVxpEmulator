@@ -24,7 +24,7 @@ import kotlin.concurrent.thread
  * mre -> emulator -> graphics -> input all genuinely run, including
  * mre/VmDispatcher's guest-call trap. Since we don't know real MRE OS
  * API addresses (see mre/VmDispatcher's doc comment), a loaded game's
- * actual vm_graphic_*/vm_get_key_state calls will still fault rather
+ * actual vm_graphic_*vm_get_key_state calls will still fault rather
  * than being handled - so onFrameRendered below still draws a
  * self-contained test pattern rather than real game output, but it DOES
  * respond to the on-screen keypad (UP/DOWN nudge the box, SELECT
