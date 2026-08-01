@@ -16,7 +16,7 @@ private const val TAG = "MemoryManager"
  * One instance per running emulator - emulator/Emulator will own its
  * lifecycle (setup() at load time, teardown() on stop).
  */
-class MemoryManager {
+class MemoryManager : GuestMemoryReader {
 
     private var engineHandle: Long = 0
     private val map = MemoryMap()

@@ -2,8 +2,19 @@ package com.nokia.vxp.emulator
 
 import android.content.ContentResolver
 import android.net.Uri
+import com.nokia.vxp.graphics.GraphicsEngine
+import com.nokia.vxp.input.InputManager
 import com.nokia.vxp.loader.LoadResult
 import com.nokia.vxp.loader.VxpLoader
+import com.nokia.vxp.mre.VmAudio
+import com.nokia.vxp.mre.VmDispatcher
+import com.nokia.vxp.mre.VmFile
+import com.nokia.vxp.mre.VmGraphics
+import com.nokia.vxp.mre.VmInput
+import com.nokia.vxp.mre.VmMemory
+import com.nokia.vxp.mre.VmNetwork
+import com.nokia.vxp.mre.VmSystem
+import com.nokia.vxp.mre.VmTimer
 import com.nokia.vxp.utils.Logger
 
 private const val TAG = "Emulator"
@@ -18,10 +29,21 @@ interface EmulatorCallback {
 /**
  * Top-level façade that EmulatorActivity talks to: load a VXP file, then
  * start/pause/resume/stop the running session. Wires together loader/,
- * memory/, cpu/, and this module's own EmulatorLoop - callers don't need
- * to touch any of those directly.
+ * memory/, cpu/, mre/, and this module's own EmulatorLoop - callers
+ * don't need to touch any of those directly.
+ *
+ * [graphicsEngine] and [inputManager] are optional: pass them in if the
+ * caller has a display/keypad to wire up (EmulatorActivity does); omit
+ * them for a headless session (e.g. a future test harness) and the
+ * corresponding mre.VmGraphics/VmInput handlers simply won't be
+ * registered, so guest calls to those APIs will fault instead of being
+ * silently ignored - visible in logs rather than hidden.
  */
-class Emulator(private val config: EmulatorConfig = EmulatorConfig()) {
+class Emulator(
+    private val config: EmulatorConfig = EmulatorConfig(),
+    private val graphicsEngine: GraphicsEngine? = null,
+    private val inputManager: InputManager? = null
+) {
 
     private var runtime: Runtime? = null
     private var loop: EmulatorLoop? = null
@@ -44,15 +66,27 @@ class Emulator(private val config: EmulatorConfig = EmulatorConfig()) {
                 }
                 runtime = builtRuntime
 
+                val vmDispatcher = VmDispatcher()
+                VmSystem.registerHandlers(vmDispatcher)
+                VmMemory.registerHandlers(vmDispatcher, builtRuntime.memoryManager)
+                VmTimer.registerHandlers(vmDispatcher, timerManager)
+                VmAudio.registerHandlers(vmDispatcher)
+                VmFile.registerHandlers(vmDispatcher)
+                VmNetwork.registerHandlers(vmDispatcher)
+                graphicsEngine?.let { VmGraphics.registerHandlers(vmDispatcher, it) }
+                inputManager?.let { VmInput.registerHandlers(vmDispatcher, it) }
+
                 val scheduler = Scheduler(config)
                 val frameLimiter = FrameLimiter(config.targetFps)
 
                 loop = EmulatorLoop(
                     executor = builtRuntime.executor,
+                    memoryManager = builtRuntime.memoryManager,
                     eventQueue = eventQueue,
                     timerManager = timerManager,
                     scheduler = scheduler,
                     frameLimiter = frameLimiter,
+                    vmDispatcher = vmDispatcher,
                     onFrameRendered = { callback.onFrameRendered() },
                     onFault = { reason -> callback.onFault(reason) }
                 )

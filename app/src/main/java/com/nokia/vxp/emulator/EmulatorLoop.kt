@@ -2,6 +2,8 @@ package com.nokia.vxp.emulator
 
 import com.nokia.vxp.cpu.Executor
 import com.nokia.vxp.cpu.RunResult
+import com.nokia.vxp.memory.MemoryManager
+import com.nokia.vxp.mre.VmDispatcher
 import com.nokia.vxp.utils.Logger
 
 private const val TAG = "EmulatorLoop"
@@ -11,15 +13,21 @@ private const val TAG = "EmulatorLoop"
  * events, runs a bounded batch of guest instructions via Executor,
  * advances emulated timers, and paces itself to the configured FPS.
  * Graphics/audio rendering hooks are plain callbacks so this class
- * doesn't need to depend on the graphics/ or audio/ modules directly
- * (neither exists yet).
+ * doesn't need to depend on the graphics/ or audio/ modules directly.
+ *
+ * [vmDispatcher], if provided, is installed here (inside loop(), i.e. on
+ * this class's own dedicated thread) rather than wherever the caller
+ * constructed things - see mre.VmDispatcher's install() doc for why
+ * that thread-affinity matters (cached JNIEnv pointers are thread-local).
  */
 class EmulatorLoop(
     private val executor: Executor,
+    private val memoryManager: MemoryManager,
     private val eventQueue: EventQueue,
     private val timerManager: TimerManager,
     private val scheduler: Scheduler,
     private val frameLimiter: FrameLimiter,
+    private val vmDispatcher: VmDispatcher? = null,
     private val onFrameRendered: (() -> Unit)? = null,
     private val onFault: ((String) -> Unit)? = null,
     private val onKeyEvent: ((EmulatorEvent) -> Unit)? = null
@@ -57,32 +65,48 @@ class EmulatorLoop(
 
     private fun loop() {
         Logger.i(TAG, "EmulatorLoop started")
-        while (running) {
-            frameLimiter.startFrame()
 
-            processEvents()
+        // Installed here (not by whoever constructed EmulatorLoop) so the
+        // dispatch hook's cached JNIEnv belongs to *this* thread, which is
+        // the same thread that will call executor.run() below and
+        // therefore the same thread the hook callback fires synchronously
+        // on. See VmDispatcher.install()'s doc comment.
+        val dispatcherInstalled = vmDispatcher?.install(memoryManager) ?: false
+        if (vmDispatcher != null && !dispatcherInstalled) {
+            Logger.w(TAG, "VmDispatcher failed to install - guest OS API calls will fault instead of being handled")
+        }
 
-            if (!paused && running) {
-                val instructionCount = scheduler.instructionsForNextFrame()
-                val startedNanos = System.nanoTime()
-                val result = executor.run(maxInstructions = instructionCount)
-                val elapsedNanos = System.nanoTime() - startedNanos
+        try {
+            while (running) {
+                frameLimiter.startFrame()
 
-                scheduler.recordFrameTiming(instructionCount, elapsedNanos)
+                processEvents()
 
-                if (result is RunResult.Error) {
-                    Logger.e(TAG, "Execution fault: ${result.message}")
-                    onFault?.invoke(result.message)
-                    running = false
-                    break
+                if (!paused && running) {
+                    val instructionCount = scheduler.instructionsForNextFrame()
+                    val startedNanos = System.nanoTime()
+                    val result = executor.run(maxInstructions = instructionCount)
+                    val elapsedNanos = System.nanoTime() - startedNanos
+
+                    scheduler.recordFrameTiming(instructionCount, elapsedNanos)
+
+                    if (result is RunResult.Error) {
+                        Logger.e(TAG, "Execution fault: ${result.message}")
+                        onFault?.invoke(result.message)
+                        running = false
+                        break
+                    }
+
+                    timerManager.advance(elapsedNanos / 1_000_000)
+                    onFrameRendered?.invoke()
                 }
 
-                timerManager.advance(elapsedNanos / 1_000_000)
-                onFrameRendered?.invoke()
+                frameLimiter.endFrameAndWait()
             }
-
-            frameLimiter.endFrameAndWait()
+        } finally {
+            if (dispatcherInstalled) vmDispatcher?.uninstall()
         }
+
         Logger.i(TAG, "EmulatorLoop stopped")
     }
 

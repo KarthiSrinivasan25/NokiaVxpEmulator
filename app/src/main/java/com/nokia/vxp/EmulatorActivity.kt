@@ -21,14 +21,15 @@ import kotlin.concurrent.thread
  * VirtualKeypadView in the bottom frame (see activity_emulator.xml).
  *
  * The full pipeline is now real end-to-end: loader -> memory -> cpu ->
- * emulator -> graphics -> input all genuinely run. There's no
- * mre/VmGraphics or mre/VmInput yet to translate guest draw/input
- * syscalls, so onFrameRendered below draws a small self-contained test
- * pattern instead of real game output - but it DOES respond to the
- * on-screen keypad (UP/DOWN nudge the box, SELECT recenters it), which
- * proves VirtualKeypadView -> TouchMapper -> InputManager -> Emulator
- * all work end to end, even before there's a guest input syscall on the
- * other end consuming Emulator.sendKeyDown/Up.
+ * mre -> emulator -> graphics -> input all genuinely run, including
+ * mre/VmDispatcher's guest-call trap. Since we don't know real MRE OS
+ * API addresses (see mre/VmDispatcher's doc comment), a loaded game's
+ * actual vm_graphic_*/vm_get_key_state calls will still fault rather
+ * than being handled - so onFrameRendered below still draws a
+ * self-contained test pattern rather than real game output, but it DOES
+ * respond to the on-screen keypad (UP/DOWN nudge the box, SELECT
+ * recenters it), proving the whole VirtualKeypadView -> TouchMapper ->
+ * InputManager -> Emulator chain works end to end.
  */
 class EmulatorActivity : AppCompatActivity() {
 
@@ -66,16 +67,21 @@ class EmulatorActivity : AppCompatActivity() {
         requireNotNull(vxpUriString) { "EmulatorActivity requires EXTRA_VXP_URI" }
         val uri = Uri.parse(vxpUriString)
 
-        emulator = Emulator()
-
+        // inputManager must exist before constructing Emulator, since
+        // Emulator registers mre/VmInput's handlers against it at load time.
         inputManager = InputManager { event ->
             // Forward every key transition to the guest-facing event
-            // queue (no-op today since there's no mre/VmInput reading
-            // it yet, but the plumbing is real and ready).
+            // queue - real plumbing now: mre/VmInput's handler (if
+            // registered) reads pressed state straight from this same
+            // InputManager instance when a guest vm_get_key_state call
+            // is trapped, so this is already "live" wiring, not just
+            // scaffolding waiting on a future module.
             if (event.down) emulator.sendKeyDown(event.key.guestCode) else emulator.sendKeyUp(event.key.guestCode)
 
             // Also drive the local test pattern directly, so pressing
-            // keys visibly does something right now.
+            // keys visibly does something right now regardless of
+            // whether the loaded game's own vm_get_key_state calls land
+            // on a real (currently unknown) address.
             if (event.down) {
                 when (event.key) {
                     NokiaKey.UP -> verticalNudge = (verticalNudge - 4).coerceAtLeast(-40)
@@ -95,6 +101,8 @@ class EmulatorActivity : AppCompatActivity() {
                 container.addView(this)
             }
         }
+
+        emulator = Emulator(graphicsEngine = graphicsEngine, inputManager = inputManager)
 
         statusView.text = "Loading…"
 
@@ -128,8 +136,8 @@ class EmulatorActivity : AppCompatActivity() {
      * Stand-in for real guest-driven rendering: proves FrameBuffer,
      * DoubleBuffer, FontRenderer, ScreenScaler, EmulatorSurfaceView, and
      * (via verticalNudge) the input pipeline all work together. Delete
-     * this once mre/VmGraphics + mre/VmInput exist and actually drive
-     * GraphicsEngine/Emulator from real guest syscalls instead.
+     * this once real MRE OS API addresses are known and mre/VmGraphics's
+     * handlers are actually being hit by a loaded game's real calls.
      */
     private fun drawTestPattern() {
         val w = Constants.DEFAULT_SCREEN_WIDTH
