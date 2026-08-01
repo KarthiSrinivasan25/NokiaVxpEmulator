@@ -81,7 +81,7 @@ class MemoryManager : GuestMemoryReader {
         stackImpl = null
     }
 
-    fun read(address: Long, length: Int): ByteArray? {
+   override fun read(address: Long, length: Int): ByteArray? {
         if (!isEngineReady) {
             Logger.w(TAG, "read() called with no engine set up")
             return null
