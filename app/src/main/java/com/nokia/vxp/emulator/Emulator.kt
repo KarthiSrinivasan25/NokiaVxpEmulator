@@ -15,6 +15,7 @@ import com.nokia.vxp.mre.VmMemory
 import com.nokia.vxp.mre.VmNetwork
 import com.nokia.vxp.mre.VmSystem
 import com.nokia.vxp.mre.VmTimer
+import com.nokia.vxp.resource.ResourceManager
 import com.nokia.vxp.utils.Logger
 
 private const val TAG = "Emulator"
@@ -47,6 +48,7 @@ class Emulator(
 
     private var runtime: Runtime? = null
     private var loop: EmulatorLoop? = null
+    private var resourceManager: ResourceManager? = null
 
     val eventQueue = EventQueue()
     private val timerManager = TimerManager()
@@ -65,6 +67,9 @@ class Emulator(
                     return
                 }
                 runtime = builtRuntime
+
+                resourceManager = ResourceManager.from(result.vxpFile.resourceSectionData)
+                Logger.i(TAG, resourceManager!!.summary())
 
                 val vmDispatcher = VmDispatcher()
                 VmSystem.registerHandlers(vmDispatcher)
@@ -107,8 +112,15 @@ class Emulator(
         runtime?.teardown()
         runtime = null
         loop = null
+        resourceManager = null
     }
+
+    /** Exposes this session's parsed .vm_res resources for debug tooling or a future UI. Null before a successful load. */
+    fun currentResources(): ResourceManager? = resourceManager
 
     fun isRunning(): Boolean = loop?.isRunning() ?: false
     fun currentFps(): Double = loop?.currentFps() ?: 0.0
+
+    /** Exposes the current session's Runtime (memory/cpu/executor) for debug tooling. Null before a successful load. */
+    fun currentRuntime(): Runtime? = runtime
 }

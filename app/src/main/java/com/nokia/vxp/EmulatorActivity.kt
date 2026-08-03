@@ -6,6 +6,9 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.nokia.vxp.debug.DebugOverlay
+import com.nokia.vxp.debug.FPSMonitor
+import com.nokia.vxp.debug.MemoryViewer
 import com.nokia.vxp.emulator.Emulator
 import com.nokia.vxp.emulator.EmulatorCallback
 import com.nokia.vxp.graphics.EmulatorSurfaceView
@@ -14,6 +17,7 @@ import com.nokia.vxp.input.InputManager
 import com.nokia.vxp.input.NokiaKey
 import com.nokia.vxp.input.VirtualKeypadView
 import com.nokia.vxp.utils.Constants
+import com.nokia.vxp.utils.Logger
 import kotlin.concurrent.thread
 
 /**
@@ -46,6 +50,7 @@ class EmulatorActivity : AppCompatActivity() {
 
     private var testPatternFrame = 0
     private var verticalNudge = 0
+    private val fpsMonitor = FPSMonitor(targetFps = 30)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,6 +116,12 @@ class EmulatorActivity : AppCompatActivity() {
             emulator.load(contentResolver, uri, object : EmulatorCallback {
                 override fun onLoaded(versionInfo: String) {
                     runOnUiThread { statusView.text = "$versionInfo loaded. Running…" }
+                    emulator.currentRuntime()?.let { runtime ->
+                        Logger.i("MemoryLayout", "Mapped regions for this session:")
+                        for (line in MemoryViewer.listRegions(runtime.memoryManager)) {
+                            Logger.i("MemoryLayout", line)
+                        }
+                    }
                     emulator.start()
                 }
 
@@ -152,7 +163,9 @@ class EmulatorActivity : AppCompatActivity() {
 
         graphicsEngine.clear(0xFF0F380F.toInt()) // classic LCD-green-ish background
         graphicsEngine.fillRect(bx, by, boxSize, boxSize, 0xFF9BBB0F.toInt())
-        graphicsEngine.drawText(4, 4, "%.0f".format(surfaceView.currentFps()), 0xFF9BBB0F.toInt(), scale = 2)
+
+        fpsMonitor.recordFrame()
+        DebugOverlay.draw(graphicsEngine, fpsMonitor, x = 4, y = 4, scale = 2)
 
         graphicsEngine.presentFrame()
         surfaceView.requestRender()

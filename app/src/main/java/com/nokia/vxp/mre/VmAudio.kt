@@ -5,7 +5,7 @@ import com.nokia.vxp.utils.Logger
 private const val TAG = "VmAudio"
 
 /**
- * Placeholder for audio-related vm_snd_ vm_media_* API surface. The
+ * Placeholder for audio-related vm_snd_*vm_media_* API surface. The
  * audio/ module (AudioManager, AudioMixer, etc) hasn't been built yet,
  * so every handler here just logs the call and returns 0 rather than
  * silently pretending to succeed in a way that could mask a real
