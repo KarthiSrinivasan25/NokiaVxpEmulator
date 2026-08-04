@@ -112,73 +112,35 @@ class EmulatorActivity : AppCompatActivity() {
         statusView.text = "Loading…"
 
         // Loader does file I/O + parsing; keep it off the main thread.
-       thread(name = "VxpLoadThread") {
-    try {
-        emulator.load(contentResolver, uri, object : EmulatorCallback {
-
-            override fun onLoaded(versionInfo: String) {
-                runOnUiThread {
-                    statusView.text = "$versionInfo loaded. Running…"
-                }
-
-                try {
+        thread(name = "VxpLoadThread") {
+            emulator.load(contentResolver, uri, object : EmulatorCallback {
+                override fun onLoaded(versionInfo: String) {
+                    runOnUiThread { statusView.text = "$versionInfo loaded. Running…" }
                     emulator.currentRuntime()?.let { runtime ->
                         Logger.i("MemoryLayout", "Mapped regions for this session:")
                         for (line in MemoryViewer.listRegions(runtime.memoryManager)) {
                             Logger.i("MemoryLayout", line)
                         }
                     }
+                    emulator.start()
+                }
 
-runOnUiThread {
-    try {
-        Logger.i("EmulatorActivity", "Starting emulator...")
-        emulator.start()
-        Logger.i("EmulatorActivity", "Emulator started")
-    } catch (e: Throwable) {
-        Logger.e("EmulatorActivity", "START CRASH", e)
-        statusView.text = "Start crash: ${e.message}"
-    }
-}
-                } catch (e: Exception) {
-                    Logger.e("EmulatorActivity", "Start failed: ${e.message}")
+                override fun onLoadFailed(reason: String) {
+                    runOnUiThread { statusView.text = "Load failed: $reason" }
+                }
+
+                override fun onFrameRendered() {
+                    drawTestPattern()
                     runOnUiThread {
-                        statusView.text = "Start crash: ${e.message}"
+                        statusView.text = "" // let the on-screen FPS readout speak for itself
                     }
                 }
-            }
 
-            override fun onLoadFailed(reason: String) {
-                runOnUiThread {
-                    statusView.text = "Load failed: $reason"
+                override fun onFault(reason: String) {
+                    runOnUiThread { statusView.text = "Emulator faulted: $reason" }
                 }
-            }
-
-            override fun onFrameRendered() {
-    runOnUiThread {
-        try {
-            drawTestPattern()
-            statusView.text = ""
-        } catch (e: Exception) {
-            Logger.e("EmulatorActivity", "Render failed", e)
-            statusView.text = "Render crash: ${e.message}"
+            })
         }
-    }
-}
-            override fun onFault(reason: String) {
-                runOnUiThread {
-                    statusView.text = "Emulator faulted: $reason"
-                }
-            }
-        })
-
-    } catch (e: Exception) {
-        Logger.e("EmulatorActivity", "Load thread crashed: ${e.message}")
-
-        runOnUiThread {
-            statusView.text = "Crash: ${e.message}"
-        }
-    }
-}
     }
 
     /**

@@ -96,20 +96,7 @@ object ModuleMapper {
             initialContent = null
         )
 
-segmentRegions.forEach {
-    Logger.i(
-        "ModuleMapper",
-        "${it.name}: base=0x${it.baseAddress.toString(16)} " +
-        "size=0x${it.size.toString(16)} " +
-        "exec=${it.executable}"
-    )
-}
 
-Logger.i(
-    "ModuleMapper",
-    "Entry=0x${vxpFile.header.realEntryAddress.toString(16)} " +
-    "Thumb=${vxpFile.header.isThumbEntry}"
-)
         return ModuleMemoryLayout(
             entryPoint = vxpFile.header.realEntryAddress,
             isThumbEntry = vxpFile.header.isThumbEntry,
