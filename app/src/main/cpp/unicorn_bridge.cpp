@@ -11,7 +11,7 @@ uc_engine* vxp_create_arm_engine() {
 
     uc_err err = uc_open(
         UC_ARCH_ARM,
-        UC_MODE_ARM,
+        UC_MODE_ARM | UC_MODE_THUMB,
         &uc
     );
 
@@ -20,7 +20,7 @@ uc_engine* vxp_create_arm_engine() {
         return nullptr;
     }
 
-    LOGI("Unicorn ARM engine created");
+    LOGI("Unicorn ARM/THUMB engine created");
 
     return uc;
 }

@@ -35,10 +35,11 @@ class Runtime private constructor(
             }
 
             val cpuState = CpuState(memoryManager)
-            cpuState.initEntry(
-                entryPoint = loadResult.memoryLayout.entryPoint,
-                initialSp = memoryManager.stack.initialStackPointer
-            )
+           cpuState.initEntry(
+    entryPoint = loadResult.memoryLayout.entryPoint,
+    initialSp = memoryManager.stack.initialStackPointer,
+    thumb = loadResult.memoryLayout.isThumbEntry
+)
             if (loadResult.memoryLayout.isThumbEntry) {
                 // ELF entry point had its low bit set - standard ARM
                 // interworking convention for "this code starts in Thumb
