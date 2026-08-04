@@ -129,8 +129,14 @@ class EmulatorActivity : AppCompatActivity() {
                         }
                     }
 
-                    emulator.start()
-
+runOnUiThread {
+    try {
+        emulator.start()
+    } catch (e: Exception) {
+        Logger.e("EmulatorActivity", "Start failed", e)
+        statusView.text = "Start crash: ${e.message}"
+    }
+}
                 } catch (e: Exception) {
                     Logger.e("EmulatorActivity", "Start failed: ${e.message}")
                     runOnUiThread {
@@ -146,12 +152,16 @@ class EmulatorActivity : AppCompatActivity() {
             }
 
             override fun onFrameRendered() {
-                drawTestPattern()
-                runOnUiThread {
-                    statusView.text = ""
-                }
-            }
-
+    runOnUiThread {
+        try {
+            drawTestPattern()
+            statusView.text = ""
+        } catch (e: Exception) {
+            Logger.e("EmulatorActivity", "Render failed", e)
+            statusView.text = "Render crash: ${e.message}"
+        }
+    }
+}
             override fun onFault(reason: String) {
                 runOnUiThread {
                     statusView.text = "Emulator faulted: $reason"
