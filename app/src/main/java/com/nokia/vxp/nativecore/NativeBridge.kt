@@ -36,3 +36,4 @@ object NativeBridge {
      */
     external fun nativeInit(): Boolean
 }
+

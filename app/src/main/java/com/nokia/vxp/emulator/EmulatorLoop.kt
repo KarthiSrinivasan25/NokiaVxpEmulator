@@ -87,9 +87,9 @@ class EmulatorLoop(
                     val startedNanos = System.nanoTime()
 val result = try {
     executor.run(maxInstructions = instructionCount)
-} catch (e: Exception) {
-    Logger.e(TAG, "CPU exception: ${e.message}")
-    onFault?.invoke("CPU exception: ${e.message}")
+} catch (e: Throwable) {
+    Logger.e(TAG, "CPU execution crash", e)
+    onFault?.invoke("CPU crash: ${e.message}")
     running = false
     break
 }

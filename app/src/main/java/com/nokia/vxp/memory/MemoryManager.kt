@@ -67,6 +67,14 @@ class MemoryManager : GuestMemoryReader {
         heapImpl = Heap(this, layout.heapRegion.baseAddress, layout.heapRegion.size)
         stackImpl = Stack(layout.stackRegion.baseAddress, layout.stackRegion.size)
 
+
+for (r in layout.regions) {
+    Logger.i(
+        TAG,
+        "REGION ${r.name}: base=0x${r.baseAddress.toString(16)} " +
+        "size=${r.size} exec=${r.executable} write=${r.writable}"
+    )
+}
         Logger.i(TAG, "Memory setup complete: ${layout.regions.size} regions mapped")
         return true
     }

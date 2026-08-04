@@ -131,9 +131,11 @@ class EmulatorActivity : AppCompatActivity() {
 
 runOnUiThread {
     try {
+        Logger.i("EmulatorActivity", "Starting emulator...")
         emulator.start()
-    } catch (e: Exception) {
-        Logger.e("EmulatorActivity", "Start failed", e)
+        Logger.i("EmulatorActivity", "Emulator started")
+    } catch (e: Throwable) {
+        Logger.e("EmulatorActivity", "START CRASH", e)
         statusView.text = "Start crash: ${e.message}"
     }
 }
