@@ -10,10 +10,10 @@ uc_engine* vxp_create_arm_engine() {
     uc_engine* uc = nullptr;
 
     uc_err err = uc_open(
-        UC_ARCH_ARM,
-        UC_MODE_ARM | UC_MODE_THUMB,
-        &uc
-    );
+    UC_ARCH_ARM,
+    static_cast<uc_mode>(UC_MODE_ARM | UC_MODE_THUMB),
+    &uc
+);
 
     if (err != UC_ERR_OK) {
         LOGE("uc_open failed: %s", uc_strerror(err));
