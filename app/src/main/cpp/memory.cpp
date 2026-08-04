@@ -6,7 +6,7 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static constexpr uint64_t PAGE_SIZE = 0x1000; // 4KB, required by Unicorn/QEMU
+static constexpr uint64_t VXP_PAGE_SIZE = 0x1000; // 4KB, required by Unicorn/QEMU
 
 static uint64_t align_down(uint64_t addr) {
     return addr & ~(PAGE_SIZE - 1);
