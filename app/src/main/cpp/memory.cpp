@@ -9,12 +9,12 @@
 static constexpr uint64_t VXP_PAGE_SIZE = 0x1000; // 4KB, required by Unicorn/QEMU
 
 static uint64_t align_down(uint64_t addr) {
-    return addr & ~(PAGE_SIZE - 1);
+    return addr & ~(VXP_PAGE_SIZE - 1);
 }
 
 uint64_t vxp_align_size_to_page(uint64_t size) {
-    if (size == 0) return PAGE_SIZE;
-    return (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
+    if (size == 0) return VXP_PAGE_SIZE;
+    return (size + (VXP_PAGE_SIZE - 1)) & ~(VXP_PAGE_SIZE - 1);
 }
 
 bool vxp_map_region(uc_engine* uc, uint64_t base, uint64_t size, uint32_t perms,
@@ -40,13 +40,24 @@ bool vxp_map_region(uc_engine* uc, uint64_t base, uint64_t size, uint32_t perms,
     }
 
     if (initialData != nullptr && initialLen > 0) {
-        err = uc_mem_write(uc, base, initialData, initialLen);
-        if (err != UC_ERR_OK) {
-            LOGE("uc_mem_write(addr=0x%llx, len=%zu) during map failed: %s",
-                 (unsigned long long) base, initialLen, uc_strerror(err));
-            return false;
-        }
+
+    if (initialLen > size) {
+        LOGE("initial data larger than mapped region: data=%zu size=0x%llx",
+             initialLen,
+             (unsigned long long)size);
+        return false;
     }
+
+    err = uc_mem_write(uc, base, initialData, initialLen);
+
+    if (err != UC_ERR_OK) {
+        LOGE("uc_mem_write(addr=0x%llx, len=%zu) during map failed: %s",
+             (unsigned long long) base,
+             initialLen,
+             uc_strerror(err));
+        return false;
+    }
+}
 
     LOGI("Mapped region: logicalBase=0x%llx size=0x%llx (aligned base=0x%llx size=0x%llx) perms=%u",
          (unsigned long long) base, (unsigned long long) size,
