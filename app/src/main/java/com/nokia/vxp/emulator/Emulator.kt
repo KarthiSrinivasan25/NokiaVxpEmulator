@@ -1,7 +1,9 @@
 package com.nokia.vxp.emulator
 
 import android.content.ContentResolver
+import android.content.Context
 import android.net.Uri
+import com.nokia.vxp.audio.AudioManager
 import com.nokia.vxp.graphics.GraphicsEngine
 import com.nokia.vxp.input.InputManager
 import com.nokia.vxp.loader.LoadResult
@@ -38,17 +40,22 @@ interface EmulatorCallback {
  * them for a headless session (e.g. a future test harness) and the
  * corresponding mre.VmGraphics/VmInput handlers simply won't be
  * registered, so guest calls to those APIs will fault instead of being
- * silently ignored - visible in logs rather than hidden.
+ * silently ignored - visible in logs rather than hidden. [context] is
+ * similarly optional and only needed for real audio.AudioManager
+ * playback (AudioTrack/MediaPlayer both need a Context); without it,
+ * mre.VmAudio falls back to logging only.
  */
 class Emulator(
     private val config: EmulatorConfig = EmulatorConfig(),
     private val graphicsEngine: GraphicsEngine? = null,
-    private val inputManager: InputManager? = null
+    private val inputManager: InputManager? = null,
+    private val context: Context? = null
 ) {
 
     private var runtime: Runtime? = null
     private var loop: EmulatorLoop? = null
     private var resourceManager: ResourceManager? = null
+    private var audioManager: AudioManager? = null
 
     val eventQueue = EventQueue()
     private val timerManager = TimerManager()
@@ -75,7 +82,8 @@ class Emulator(
                 VmSystem.registerHandlers(vmDispatcher)
                 VmMemory.registerHandlers(vmDispatcher, builtRuntime.memoryManager)
                 VmTimer.registerHandlers(vmDispatcher, timerManager)
-                VmAudio.registerHandlers(vmDispatcher)
+                audioManager = context?.let { AudioManager(it) }
+                VmAudio.registerHandlers(vmDispatcher, audioManager)
                 VmFile.registerHandlers(vmDispatcher)
                 VmNetwork.registerHandlers(vmDispatcher)
                 graphicsEngine?.let { VmGraphics.registerHandlers(vmDispatcher, it) }
@@ -113,6 +121,8 @@ class Emulator(
         runtime = null
         loop = null
         resourceManager = null
+        audioManager?.stopAll()
+        audioManager = null
     }
 
     /** Exposes this session's parsed .vm_res resources for debug tooling or a future UI. Null before a successful load. */

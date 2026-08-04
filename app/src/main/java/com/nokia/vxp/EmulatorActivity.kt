@@ -107,7 +107,7 @@ class EmulatorActivity : AppCompatActivity() {
             }
         }
 
-        emulator = Emulator(graphicsEngine = graphicsEngine, inputManager = inputManager)
+        emulator = Emulator(graphicsEngine = graphicsEngine, inputManager = inputManager, context = this)
 
         statusView.text = "Loading…"
 
