@@ -85,7 +85,14 @@ class EmulatorLoop(
                 if (!paused && running) {
                     val instructionCount = scheduler.instructionsForNextFrame()
                     val startedNanos = System.nanoTime()
-                    val result = executor.run(maxInstructions = instructionCount)
+val result = try {
+    executor.run(maxInstructions = instructionCount)
+} catch (e: Exception) {
+    Logger.e(TAG, "CPU exception: ${e.message}")
+    onFault?.invoke("CPU exception: ${e.message}")
+    running = false
+    break
+}
                     val elapsedNanos = System.nanoTime() - startedNanos
 
                     scheduler.recordFrameTiming(instructionCount, elapsedNanos)
