@@ -118,11 +118,19 @@ class EmulatorActivity : AppCompatActivity() {
                 override fun onLoaded(versionInfo: String) {
                     runOnUiThread { statusView.text = "$versionInfo loaded. Running…" }
                     emulator.currentRuntime()?.let { runtime ->
-                        Logger.i("MemoryLayout", "Mapped regions for this session:")
-                        for (line in MemoryViewer.listRegions(runtime.memoryManager)) {
-                            Logger.i("MemoryLayout", line)
-                        }
-                    }
+
+    Logger.i("MEMORY", "========== MEMORY MAP ==========")
+
+    for (region in runtime.memoryManager.regions()) {
+
+        Logger.i(
+            "MEMORY",
+            "${region.name} " +
+            "base=0x${region.baseAddress.toString(16)} " +
+            "size=0x${region.size.toString(16)}"
+        )
+    }
+}
                     emulator.start()
                 }
 
