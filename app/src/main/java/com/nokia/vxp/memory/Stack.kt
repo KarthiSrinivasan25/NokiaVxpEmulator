@@ -15,7 +15,8 @@ class Stack(private val stackBase: Long, private val stackSize: Long) {
     val initialStackPointer: Long get() = stackBase + stackSize
 
     fun isValidStackAddress(address: Long): Boolean =
-        address in stackBase..(stackBase + stackSize)
+    address >= stackBase &&
+    address < stackBase + stackSize
 
     /** Returns the new SP after pushing [bytes], or null if that would underflow the stack region. */
     fun computeSpAfterPush(currentSp: Long, bytes: Long): Long? {
