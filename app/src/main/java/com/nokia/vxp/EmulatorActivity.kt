@@ -28,7 +28,7 @@ import kotlin.concurrent.thread
  * mre -> emulator -> graphics -> input all genuinely run, including
  * mre/VmDispatcher's guest-call trap. Since we don't know real MRE OS
  * API addresses (see mre/VmDispatcher's doc comment), a loaded game's
- * actual vm_graphic_*vm_get_key_state calls will still fault rather
+ * actual vm_graphic_*/vm_reg_keyboard_callback calls will still fault rather
  * than being handled - so onFrameRendered below still draws a
  * self-contained test pattern rather than real game output, but it DOES
  * respond to the on-screen keypad (UP/DOWN nudge the box, SELECT
@@ -78,14 +78,15 @@ class EmulatorActivity : AppCompatActivity() {
             // Forward every key transition to the guest-facing event
             // queue - real plumbing now: mre/VmInput's handler (if
             // registered) reads pressed state straight from this same
-            // InputManager instance when a guest vm_get_key_state call
-            // is trapped, so this is already "live" wiring, not just
-            // scaffolding waiting on a future module.
+            // InputManager instance if a guest vm_reg_keyboard_callback
+            // registration is ever actually delivered an event, so this is
+            // already "live" wiring, not just scaffolding waiting on a
+            // future module.
             if (event.down) emulator.sendKeyDown(event.key.guestCode) else emulator.sendKeyUp(event.key.guestCode)
 
             // Also drive the local test pattern directly, so pressing
             // keys visibly does something right now regardless of
-            // whether the loaded game's own vm_get_key_state calls land
+            // whether the loaded game's own vm_reg_keyboard_callback registration lands
             // on a real (currently unknown) address.
             if (event.down) {
                 when (event.key) {

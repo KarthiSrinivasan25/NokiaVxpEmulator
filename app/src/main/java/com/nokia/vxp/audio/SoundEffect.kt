@@ -3,7 +3,12 @@ package com.nokia.vxp.audio
 /**
  * Convenience wrapper for one-shot synthesized sound effects (as
  * opposed to AudioPlayer's file-based playback for decoded resource
- * audio). This is what feeds mre/VmAudio's vm_snd_play_frequency call.
+ * audio). Not currently called by mre.VmAudio - that module now routes
+ * through AudioPlayer for real vm_midi_play_by_bytes playback instead
+ * (vm_snd_play_frequency was an earlier, unconfirmed guess at the real
+ * audio API and has been replaced). Kept as standalone, genuinely
+ * useful tone-synthesis functionality for whenever a confirmed
+ * frequency-beep API name turns up, or for UI sound effects.
  */
 object SoundEffect {
     enum class Waveform { SINE, SQUARE }

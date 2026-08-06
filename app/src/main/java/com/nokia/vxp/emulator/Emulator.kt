@@ -8,6 +8,7 @@ import com.nokia.vxp.graphics.GraphicsEngine
 import com.nokia.vxp.input.InputManager
 import com.nokia.vxp.loader.LoadResult
 import com.nokia.vxp.loader.VxpLoader
+import com.nokia.vxp.mre.SysEventRegistry
 import com.nokia.vxp.mre.VmAudio
 import com.nokia.vxp.mre.VmDispatcher
 import com.nokia.vxp.mre.VmFile
@@ -15,6 +16,7 @@ import com.nokia.vxp.mre.VmGraphics
 import com.nokia.vxp.mre.VmInput
 import com.nokia.vxp.mre.VmMemory
 import com.nokia.vxp.mre.VmNetwork
+import com.nokia.vxp.mre.VmSymbolBinder
 import com.nokia.vxp.mre.VmSystem
 import com.nokia.vxp.mre.VmTimer
 import com.nokia.vxp.resource.ResourceManager
@@ -56,6 +58,7 @@ class Emulator(
     private var loop: EmulatorLoop? = null
     private var resourceManager: ResourceManager? = null
     private var audioManager: AudioManager? = null
+    private var sysEventRegistry: SysEventRegistry? = null
 
     val eventQueue = EventQueue()
     private val timerManager = TimerManager()
@@ -79,7 +82,8 @@ class Emulator(
                 Logger.i(TAG, resourceManager!!.summary())
 
                 val vmDispatcher = VmDispatcher()
-                VmSystem.registerHandlers(vmDispatcher)
+                sysEventRegistry = SysEventRegistry()
+                VmSystem.registerHandlers(vmDispatcher, sysEventRegistry!!)
                 VmMemory.registerHandlers(vmDispatcher, builtRuntime.memoryManager)
                 VmTimer.registerHandlers(vmDispatcher, timerManager)
                 audioManager = context?.let { AudioManager(it) }
@@ -88,6 +92,13 @@ class Emulator(
                 VmNetwork.registerHandlers(vmDispatcher)
                 graphicsEngine?.let { VmGraphics.registerHandlers(vmDispatcher, it) }
                 inputManager?.let { VmInput.registerHandlers(vmDispatcher, it) }
+
+                // Now that every handler is registered (and therefore every
+                // name VmSymbolBinder might look up is available), patch the
+                // guest's own OS-API jump table - see VmSymbolBinder's doc
+                // comment for what this actually does and why it's needed.
+                val patchedCount = VmSymbolBinder.bind(result.vxpFile.symbols, vmDispatcher, builtRuntime.memoryManager)
+                Logger.i(TAG, "Symbol binding: $patchedCount jump-table slot(s) patched from ${result.vxpFile.symbols.size} total symbols")
 
                 val scheduler = Scheduler(config)
                 val frameLimiter = FrameLimiter(config.targetFps)
@@ -123,10 +134,14 @@ class Emulator(
         resourceManager = null
         audioManager?.stopAll()
         audioManager = null
+        sysEventRegistry = null
     }
 
     /** Exposes this session's parsed .vm_res resources for debug tooling or a future UI. Null before a successful load. */
     fun currentResources(): ResourceManager? = resourceManager
+
+    /** Exposes the guest's registered event-callback addresses (sysevt/keyboard/pen), for debug tooling or a future event-delivery mechanism. */
+    fun currentSysEventRegistry(): SysEventRegistry? = sysEventRegistry
 
     fun isRunning(): Boolean = loop?.isRunning() ?: false
     fun currentFps(): Double = loop?.currentFps() ?: 0.0

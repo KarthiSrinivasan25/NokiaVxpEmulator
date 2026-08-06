@@ -16,7 +16,8 @@ sealed class ParseResult {
 /**
  * Parses already-unwrapped ELF bytes (VxpLoader handles zlib/ZIP
  * unwrapping before calling this) into a VxpFile: ELF header, program
- * headers, section headers, the .vm_res section if present, and any
+ * headers, section headers, the symbol table (if present - used by
+ * mre.VmSymbolBinder), the .vm_res section if present, and any
  * MediaTek metadata tags appended after the ELF data.
  */
 object VxpParser {
@@ -59,6 +60,13 @@ object VxpParser {
             emptyList()
         }
 
+        val symbols = try {
+            readSymbols(buffer, bytes, sectionHeaders)
+        } catch (e: Exception) {
+            Logger.w(TAG, "Exception while reading symbol table (continuing without it): ${e.message}")
+            emptyList()
+        }
+
         val resourceSectionData = sectionHeaders
             .firstOrNull { it.name == Constants.VM_RES_SECTION_NAME }
             ?.let { section ->
@@ -77,7 +85,7 @@ object VxpParser {
             TAG,
             "Parsed VXP OK: entry=0x${header.entryPoint.toString(16)} " +
                 "segments=${programHeaders.count { it.isLoadable }} " +
-                "vm_res=${resourceSectionData?.size ?: 0}B tags=${tags.size}"
+                "vm_res=${resourceSectionData?.size ?: 0}B tags=${tags.size} symbols=${symbols.size}"
         )
 
         return ParseResult.Success(
@@ -86,6 +94,7 @@ object VxpParser {
                 header = header,
                 programHeaders = programHeaders,
                 sectionHeaders = sectionHeaders,
+                symbols = symbols,
                 elfBytes = bytes,
                 resourceSectionData = resourceSectionData,
                 tags = tags,
@@ -210,6 +219,47 @@ object VxpParser {
             )
         }
     }
+
+    /**
+     * Parses .symtab (if present) into ElfSymbol entries, resolving each
+     * name via .strtab (found through .symtab's sh_link field, per the
+     * ELF spec - not a fixed section name/index). Real, non-stripped VXP
+     * files DO carry these (confirmed against gtrxAC/peanut.vxp) - the
+     * real MRE OS loader apparently needs the symbol names itself to
+     * know which "_vm_*" jump-table slot (in .bss) to patch with which
+     * real API address. See mre.VmSymbolBinder, which does the
+     * equivalent patching using our own trap addresses. Stripped files
+     * (no .symtab) simply yield an empty list here - not an error.
+     */
+    private fun readSymbols(buffer: ByteBuffer, bytes: ByteArray, sectionHeaders: List<ElfSectionHeader>): List<ElfSymbol> {
+        val symtab = sectionHeaders.firstOrNull { it.name == ".symtab" } ?: return emptyList()
+        val strtabIndex = symtab.link
+        val strtab = sectionHeaders.getOrNull(strtabIndex) ?: return emptyList()
+
+        val entrySize = if (symtab.entSize > 0) symtab.entSize.toInt() else ELF_SYM_SIZE
+        val count = (symtab.size / entrySize).toInt()
+        val symbols = ArrayList<ElfSymbol>(count)
+
+        for (i in 0 until count) {
+            val base = symtab.offset + i.toLong() * entrySize
+            if (base + ELF_SYM_SIZE > bytes.size) break
+
+            buffer.position(base.toInt())
+            val nameOffset = buffer.int
+            val value = buffer.int.toLong() and 0xFFFFFFFFL
+            val size = buffer.int.toLong() and 0xFFFFFFFFL
+            val info = buffer.get().toInt() and 0xFF
+            buffer.get() // st_other, unused
+            val sectionIndex = buffer.short.toInt() and 0xFFFF
+
+            val name = if (nameOffset == 0) "" else readNullTerminatedString(bytes, (strtab.offset + nameOffset).toInt())
+            symbols += ElfSymbol(name, value, size, info, sectionIndex)
+        }
+
+        return symbols
+    }
+
+    private const val ELF_SYM_SIZE = 16 // Elf32_Sym: name(4) value(4) size(4) info(1) other(1) shndx(2)
 
     private fun readNullTerminatedString(bytes: ByteArray, startOffset: Int): String {
         if (startOffset < 0 || startOffset >= bytes.size) return ""

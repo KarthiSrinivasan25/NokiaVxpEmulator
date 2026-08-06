@@ -37,20 +37,8 @@ class Executor(
         }
 
         pipeline.markRunning()
-      val startAddress = cpuState.getPc()
-
-Logger.i(
-    TAG,
-    "Starting CPU at PC=0x${startAddress.toString(16)}, maxInstructions=$maxInstructions"
-)
-
-val code = nativeRun(
-    handle(),
-    startAddress,
-    endAddress,
-    timeoutMicros,
-    maxInstructions
-)
+        val startAddress = cpuState.getPc()
+        val code = nativeRun(handle(), startAddress, endAddress, timeoutMicros, maxInstructions)
 
         return if (code == UC_ERR_OK) {
             pipeline.markPaused()

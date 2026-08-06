@@ -21,6 +21,3 @@ Java_com_nokia_vxp_nativecore_NativeBridge_nativeInit(JNIEnv *env, jobject /* th
     LOGI("nativeInit() called - scaffold only, currently a no-op");
     return JNI_TRUE;
 }
-
-
-

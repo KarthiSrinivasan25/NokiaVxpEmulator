@@ -61,9 +61,17 @@ object VxpValidator {
     }
 
     fun validateHeader(header: VxpHeader, totalFileSize: Long): ValidationResult {
-        if (header.machine != Constants.EM_ARM) {
+        // CONFIRMED AGAINST A REAL SAMPLE (gtrxAC/peanut.vxp, MIT licensed):
+        // real MediaTek-toolchain VXP output has e_machine = EM_NONE (0),
+        // not EM_ARM (40) as originally assumed here - the e_flags field
+        // (0x05000200 in that sample) carries the actual ARM EABI version
+        // marker instead. So EM_NONE is accepted as a known-real case
+        // alongside EM_ARM; anything else is still rejected as a genuine
+        // architecture mismatch.
+        if (header.machine != Constants.EM_ARM && header.machine != Constants.EM_NONE) {
             return ValidationResult.Failed(
-                "ELF e_machine=${header.machine} is not ARM (expected ${Constants.EM_ARM}) - " +
+                "ELF e_machine=${header.machine} is neither ARM (${Constants.EM_ARM}) nor the " +
+                    "EM_NONE (0) value real MediaTek VXP tooling is known to produce - " +
                     "this doesn't look like a VXP/MRE binary"
             )
         }

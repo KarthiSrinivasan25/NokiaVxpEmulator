@@ -1,6 +1,13 @@
 package com.nokia.vxp.resource
 
-/** One generic resource entry extracted from the .vm_res section. */
+/**
+ * One generic resource entry extracted from the .vm_res section.
+ * [rawTypeId] is repurposed by loader.ResourceLoader's carving approach
+ * to record the byte offset the resource was found at within .vm_res,
+ * since carving (as opposed to a real, fully-cracked directory parse)
+ * has no genuine type-id field to report - see ResourceLoader's doc
+ * comment for why carving is used instead.
+ */
 data class Resource(
     val id: Int,
     val rawTypeId: Int,

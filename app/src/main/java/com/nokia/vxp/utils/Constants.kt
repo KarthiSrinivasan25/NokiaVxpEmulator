@@ -25,7 +25,8 @@ object Constants {
     val ELF_MAGIC = byteArrayOf(0x7F, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte())
     const val ELF_CLASS_32 = 1
     const val ELF_DATA_2LSB = 1 // little-endian
-    const val EM_ARM = 40 // e_machine value for ARM
+    const val EM_ARM = 40 // e_machine value for ARM per the ELF spec
+    const val EM_NONE = 0 // what real MediaTek VXP tooling actually writes - see loader.VxpValidator
 
     // --- ELF32 header (Elf32_Ehdr), all fields little-endian ------------
     const val ELF_HEADER_SIZE = 52

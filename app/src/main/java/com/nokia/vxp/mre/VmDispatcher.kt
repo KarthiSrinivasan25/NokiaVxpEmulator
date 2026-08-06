@@ -63,6 +63,10 @@ class VmDispatcher {
     fun registeredCount(): Int = handlersByAddress.size
     fun handlerNameAt(address: Long): String? = handlersByAddress[address]?.name
 
+    /** Reverse lookup: the trap address registered under [name], if any. Used by mre.VmSymbolBinder to patch guest jump-table slots. */
+    fun addressForName(name: String): Long? =
+        handlersByAddress.entries.firstOrNull { it.value.name == name }?.key
+
     /**
      * MUST be called from the same thread that will subsequently call
      * Executor.run()/step() for this session (typically EmulatorLoop's

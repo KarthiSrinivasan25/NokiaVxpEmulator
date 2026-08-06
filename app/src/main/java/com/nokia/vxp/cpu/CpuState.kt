@@ -41,28 +41,16 @@ class CpuState(private val memoryManager: MemoryManager) {
     fun snapshot(): Map<Registers, Long> = Registers.values().associateWith { getRegister(it) }
 
     /** Initializes SP/PC/LR for a freshly mapped module before the first run/step call. */
-   fun initEntry(
-    entryPoint: Long,
-    initialSp: Long,
-    thumb: Boolean = false
-) {
-    val pc = if (thumb) {
-        entryPoint and 0xFFFFFFFE
-    } else {
-        entryPoint
+    fun initEntry(entryPoint: Long, initialSp: Long) {
+        setRegister(Registers.PC, entryPoint)
+        setRegister(Registers.SP, initialSp)
+        // LR also set to the entry point: some MRE-era stubs do a bare
+        // `bx lr` as a "return to loader" convention at top level: if
+        // that happens before we've set up a real call stack, this at
+        // least loops back to a mapped address instead of jumping into
+        // unmapped memory and faulting.
+        setRegister(Registers.LR, entryPoint)
     }
-
-    setRegister(Registers.PC, pc)
-    setRegister(Registers.SP, initialSp)
-
-    // No valid return address at program entry
-    setRegister(Registers.LR, 0xFFFFFFFFL)
-
-    Logger.i(
-        TAG,
-        "Entry PC=0x${pc.toString(16)} SP=0x${initialSp.toString(16)} Thumb=$thumb"
-    )
-}
 
     private external fun nativeGetRegister(handle: Long, regId: Int): Long
     private external fun nativeSetRegister(handle: Long, regId: Int, value: Long): Boolean

@@ -19,6 +19,18 @@ data class MappedRegion(
  * segments (mapped at their real ELF virtual addresses) plus a heap and
  * stack region placed safely after them. memory.MemoryManager consumes
  * this to actually set up Unicorn's mappings.
+ *
+ * ON ELF RELOCATIONS: a real sample (gtrxAC/peanut.vxp, MIT licensed)
+ * turned out to be ET_DYN (position-independent) with .rel.dyn/.rel.plt
+ * sections present - normally that would mean relocations need
+ * processing at load time (e.g. R_ARM_RELATIVE entries adding a load
+ * bias to each patched address). This mapper deliberately loads every
+ * segment at its exact file vaddr rather than rebasing anywhere else,
+ * which makes the load bias always zero - so those relocations are
+ * no-ops under this strategy specifically, and can be safely skipped.
+ * This stops being true if this mapper is ever changed to load modules
+ * at a different/dynamic base address (e.g. to run several VXP modules
+ * side by side) - relocation processing would need to be added then.
  */
 data class ModuleMemoryLayout(
     val entryPoint: Long,
@@ -95,7 +107,6 @@ object ModuleMapper {
             executable = false,
             initialContent = null
         )
-
 
         return ModuleMemoryLayout(
             entryPoint = vxpFile.header.realEntryAddress,
