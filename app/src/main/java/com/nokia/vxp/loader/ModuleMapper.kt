@@ -72,7 +72,7 @@ object ModuleMapper {
             MappedRegion(
                 name = "segment$index",
                 baseAddress = ph.vaddr,
-                size = ph.memSize,
+size = alignUp(ph.memSize),
                 readable = ph.readable,
                 writable = ph.writable,
                 executable = ph.executable,
@@ -83,7 +83,9 @@ object ModuleMapper {
         // Place heap/stack safely after the highest ELF segment, rather
         // than at fixed addresses that could collide with wherever the
         // real ELF's vaddrs actually land.
-        val highestSegmentEnd = segmentRegions.maxOfOrNull { it.baseAddress + it.size } ?: 0L
+val highestSegmentEnd = segmentRegions.maxOfOrNull {
+    it.baseAddress + alignUp(it.size)
+} ?: 0L
         val heapBase = alignUp(highestSegmentEnd + PAGE_SIZE) // one-page gap as a guard against off-by-one overruns
         val heapSize = alignUp(Constants.DEFAULT_HEAP_SIZE)
         val stackBase = alignUp(heapBase + heapSize + PAGE_SIZE)
