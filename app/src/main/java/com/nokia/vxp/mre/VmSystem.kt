@@ -22,7 +22,7 @@ private const val TAG = "VmSystem"
  */
 object VmSystem {
 
-    fun registerHandlers(dispatcher: VmDispatcher, registry: SysEventRegistry) {
+    fun registerHandlers(dispatcher: VmDispatcher, registry: SysEventRegistry, onExitRequested: (() -> Unit)? = null) {
         dispatcher.registerHandler("vm_app_log", VmApiTable.SYSTEM_LOG) { args ->
             // r0 = guest pointer to a null-terminated ASCII log message
             val message = readGuestCString(args.memory, args.r0)
@@ -32,9 +32,7 @@ object VmSystem {
 
         dispatcher.registerHandler("vm_exit_app", VmApiTable.EXIT_APP) {
             Logger.i(TAG, "Guest called vm_exit_app() - requesting emulator stop")
-            // TODO: needs a way to signal Emulator/EmulatorLoop to actually
-            // stop (e.g. posting EmulatorEvent.Stop through the event
-            // queue) once VmSystem has a reference to one - not wired yet.
+            onExitRequested?.invoke()
             0L
         }
 

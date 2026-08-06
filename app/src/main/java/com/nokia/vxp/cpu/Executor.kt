@@ -19,7 +19,7 @@ sealed class RunResult {
  */
 class Executor(
     private val memoryManager: MemoryManager,
-    private val cpuState: CpuState,
+    val cpuState: CpuState,
     val pipeline: Pipeline = Pipeline()
 ) {
 

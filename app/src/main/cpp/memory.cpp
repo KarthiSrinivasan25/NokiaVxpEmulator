@@ -6,15 +6,15 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static constexpr uint64_t kPageSize = 0x1000; // 4KB, required by Unicorn/QEMU
+static constexpr uint64_t PAGE_SIZE = 0x1000; // 4KB, required by Unicorn/QEMU
 
 static uint64_t align_down(uint64_t addr) {
-    return addr & ~(kPageSize - 1);
+    return addr & ~(PAGE_SIZE - 1);
 }
 
 uint64_t vxp_align_size_to_page(uint64_t size) {
-    if (size == 0) return kPageSize;
-    return (size + (kPageSize - 1)) & ~(kPageSize - 1);
+    if (size == 0) return PAGE_SIZE;
+    return (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
 }
 
 bool vxp_map_region(uc_engine* uc, uint64_t base, uint64_t size, uint32_t perms,
@@ -76,41 +76,4 @@ bool vxp_read_memory(uc_engine* uc, uint64_t address, uint8_t* outBuffer, size_t
         return false;
     }
     return true;
-}
-
-namespace {
-bool vxp_on_invalid_mem(uc_engine* uc, uc_mem_type type, uint64_t address,
-                         int size, int64_t value, void* /*userData*/) {
-    uint32_t pc = 0;
-    uc_reg_read(uc, UC_ARM_REG_PC, &pc);
-
-    const char* kind =
-        (type == UC_MEM_WRITE_UNMAPPED || type == UC_MEM_WRITE_PROT) ? "WRITE" :
-        (type == UC_MEM_READ_UNMAPPED  || type == UC_MEM_READ_PROT)  ? "READ"  :
-        (type == UC_MEM_FETCH_UNMAPPED || type == UC_MEM_FETCH_PROT) ? "FETCH" : "?";
-
-    LOGE("MEM FAULT: %s addr=0x%llx size=%d value=0x%llx at PC=0x%08x",
-         kind, (unsigned long long) address, size,
-         (unsigned long long) value, pc);
-
-    return false; // don't suppress the fault - just record it before it propagates
-}
-} // namespace
-
-uint64_t vxp_install_fault_logger(uc_engine* uc) {
-    if (uc == nullptr) return 0;
-    uc_hook hook;
-    uc_err err = uc_hook_add(
-        uc, &hook, UC_HOOK_MEM_INVALID,
-        reinterpret_cast<void*>(&vxp_on_invalid_mem), nullptr, 1, 0);
-    if (err != UC_ERR_OK) {
-        LOGE("uc_hook_add(MEM_INVALID) failed: %s", uc_strerror(err));
-        return 0;
-    }
-    return static_cast<uint64_t>(hook);
-}
-
-void vxp_remove_fault_logger(uc_engine* uc, uint64_t hookHandle) {
-    if (uc == nullptr || hookHandle == 0) return;
-    uc_hook_del(uc, static_cast<uc_hook>(hookHandle));
 }

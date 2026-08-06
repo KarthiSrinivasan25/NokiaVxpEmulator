@@ -83,7 +83,7 @@ class Emulator(
 
                 val vmDispatcher = VmDispatcher()
                 sysEventRegistry = SysEventRegistry()
-                VmSystem.registerHandlers(vmDispatcher, sysEventRegistry!!)
+                VmSystem.registerHandlers(vmDispatcher, sysEventRegistry!!, onExitRequested = { eventQueue.post(EmulatorEvent.Stop) })
                 VmMemory.registerHandlers(vmDispatcher, builtRuntime.memoryManager)
                 VmTimer.registerHandlers(vmDispatcher, timerManager)
                 audioManager = context?.let { AudioManager(it) }
@@ -111,6 +111,7 @@ class Emulator(
                     scheduler = scheduler,
                     frameLimiter = frameLimiter,
                     vmDispatcher = vmDispatcher,
+                    sysEventRegistry = sysEventRegistry,
                     onFrameRendered = { callback.onFrameRendered() },
                     onFault = { reason -> callback.onFault(reason) }
                 )

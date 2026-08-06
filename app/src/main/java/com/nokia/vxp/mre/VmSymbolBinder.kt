@@ -50,39 +50,20 @@ object VmSymbolBinder {
         var patchedCount = 0
 
         for (symbol in symbols) {
-    if (!symbol.name.startsWith(JUMP_TABLE_SYMBOL_PREFIX)) continue
-    if (symbol.name.startsWith("__")) continue
+            if (!symbol.name.startsWith(JUMP_TABLE_SYMBOL_PREFIX)) continue
+            if (symbol.name.startsWith("__")) continue // "__vm_x_from_arm" trampolines are a different, unrelated symbol family
 
-    val apiName = symbol.name.removePrefix("_")
-    val trapAddress = dispatcher.addressForName(apiName) ?: continue
+            val apiName = symbol.name.removePrefix("_")
+            val trapAddress = dispatcher.addressForName(apiName) ?: continue
 
-    val slotAddress = symbol.value
-
-    if (memoryManager.regionAt(slotAddress) == null ||
-        memoryManager.regionAt(slotAddress + 3) == null) {
-
-        Logger.w(
-            TAG,
-            "Skipping '${symbol.name}' - address 0x${slotAddress.toString(16)} is not mapped"
-        )
-        continue
-    }
-
-    val patched = writeSlot(memoryManager, slotAddress, trapAddress)
-
-    if (patched) {
-        patchedCount++
-        Logger.i(
-            TAG,
-            "Patched jump-table slot '${symbol.name}' @ 0x${symbol.value.toString(16)} -> 0x${trapAddress.toString(16)} ($apiName)"
-        )
-    } else {
-        Logger.w(
-            TAG,
-            "Failed to write jump-table slot '${symbol.name}' @ 0x${symbol.value.toString(16)}"
-        )
-    }
-}
+            val patched = writeSlot(memoryManager, symbol.value, trapAddress)
+            if (patched) {
+                patchedCount++
+                Logger.i(TAG, "Patched jump-table slot '${symbol.name}' @ 0x${symbol.value.toString(16)} -> 0x${trapAddress.toString(16)} ($apiName)")
+            } else {
+                Logger.w(TAG, "Failed to write jump-table slot '${symbol.name}' @ 0x${symbol.value.toString(16)} - address likely unmapped")
+            }
+        }
 
         Logger.i(TAG, "VmSymbolBinder: patched $patchedCount of ${symbols.count { it.name.startsWith(JUMP_TABLE_SYMBOL_PREFIX) && !it.name.startsWith("__") }} recognized jump-table slots")
         return patchedCount

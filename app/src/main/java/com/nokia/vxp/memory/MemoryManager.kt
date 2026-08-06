@@ -19,7 +19,6 @@ private const val TAG = "MemoryManager"
 class MemoryManager : GuestMemoryReader {
 
     private var engineHandle: Long = 0
-    private var faultLoggerHandle: Long = 0
     private val map = MemoryMap()
     private var heapImpl: Heap? = null
     private var stackImpl: Stack? = null
@@ -68,26 +67,12 @@ class MemoryManager : GuestMemoryReader {
         heapImpl = Heap(this, layout.heapRegion.baseAddress, layout.heapRegion.size)
         stackImpl = Stack(layout.stackRegion.baseAddress, layout.stackRegion.size)
 
-        // Installed last, once every region is mapped - logs the exact
-        // faulting address/PC/access-type on any invalid guest memory
-        // access instead of only surfacing a generic uc_strerror() string
-        // up through Executor/Pipeline. Non-fatal if it fails to install
-        // (0 handle): emulation still runs, we just lose the extra detail.
-        faultLoggerHandle = nativeInstallFaultLogger(engineHandle)
-        if (faultLoggerHandle == 0L) {
-            Logger.w(TAG, "Failed to install native fault logger - crash logs won't include fault address/PC")
-        }
-
         Logger.i(TAG, "Memory setup complete: ${layout.regions.size} regions mapped")
         return true
     }
 
     fun teardown() {
         if (engineHandle != 0L) {
-            if (faultLoggerHandle != 0L) {
-                nativeRemoveFaultLogger(engineHandle, faultLoggerHandle)
-                faultLoggerHandle = 0
-            }
             nativeDestroyEngine(engineHandle)
             engineHandle = 0L
         }
@@ -140,8 +125,6 @@ class MemoryManager : GuestMemoryReader {
     ): Boolean
     private external fun nativeReadBytes(handle: Long, address: Long, length: Int): ByteArray?
     private external fun nativeWriteBytes(handle: Long, address: Long, data: ByteArray): Boolean
-    private external fun nativeInstallFaultLogger(handle: Long): Long
-    private external fun nativeRemoveFaultLogger(handle: Long, hookHandle: Long)
 
     companion object {
         init {
