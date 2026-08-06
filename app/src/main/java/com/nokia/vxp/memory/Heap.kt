@@ -15,13 +15,26 @@ class Heap(
 
     /** Returns the guest-visible absolute address of the new block, or null if out of heap space. */
     fun malloc(size: Long): Long? {
-        val offset = allocator.alloc(size) ?: return null
-        val address = heapBase + offset
-        // Zero the newly allocated block so guest code never sees stale
-        // data left over from a previous allocation at this offset.
-        memoryManager.write(address, Ram.zeroed(size))
-        return address
+
+    if (size <= 0 || size > heapSize) {
+        return null
     }
+
+    val offset = allocator.alloc(size) ?: return null
+
+    if (offset + size > heapSize) {
+        return null
+    }
+
+    val address = heapBase + offset
+
+    memoryManager.write(
+        address,
+        Ram.zeroed(size)
+    )
+
+    return address
+}
 
     fun free(address: Long): Boolean {
         val offset = address - heapBase

@@ -138,8 +138,30 @@ class EmulatorActivity : AppCompatActivity() {
                 }
 
                 override fun onFault(reason: String) {
-                    runOnUiThread { statusView.text = "Emulator faulted: $reason" }
-                }
+
+    val detail = emulator.currentRuntime()?.let { runtime ->
+
+        val pc = runtime.cpuState.getPc()
+        val sp = runtime.cpuState.getSp()
+        val lr = runtime.cpuState.getLr()
+
+        """
+        Emulator faulted:
+
+        $reason
+
+        PC : 0x${pc.toString(16)}
+        SP : 0x${sp.toString(16)}
+        LR : 0x${lr.toString(16)}
+        """.trimIndent()
+
+    } ?: reason
+
+
+    runOnUiThread {
+        statusView.text = detail
+    }
+}
             })
         }
     }

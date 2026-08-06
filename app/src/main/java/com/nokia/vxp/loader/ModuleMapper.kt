@@ -111,9 +111,9 @@ val highestSegmentEnd = segmentRegions.maxOfOrNull {
         )
 
         return ModuleMemoryLayout(
-            entryPoint = vxpFile.header.realEntryAddress,
-            isThumbEntry = vxpFile.header.isThumbEntry,
-            regions = segmentRegions + heapRegion + stackRegion
-        )
+    entryPoint = vxpFile.header.realEntryAddress,
+    isThumbEntry = vxpFile.header.isThumbEntry,
+    regions = segmentRegions + heapRegion + stackRegion
+)
     }
 }
