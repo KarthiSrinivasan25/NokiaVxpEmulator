@@ -77,3 +77,40 @@ bool vxp_read_memory(uc_engine* uc, uint64_t address, uint8_t* outBuffer, size_t
     }
     return true;
 }
+
+namespace {
+bool vxp_on_invalid_mem(uc_engine* uc, uc_mem_type type, uint64_t address,
+                         int size, int64_t value, void* /*userData*/) {
+    uint32_t pc = 0;
+    uc_reg_read(uc, UC_ARM_REG_PC, &pc);
+
+    const char* kind =
+        (type == UC_MEM_WRITE_UNMAPPED || type == UC_MEM_WRITE_PROT) ? "WRITE" :
+        (type == UC_MEM_READ_UNMAPPED  || type == UC_MEM_READ_PROT)  ? "READ"  :
+        (type == UC_MEM_FETCH_UNMAPPED || type == UC_MEM_FETCH_PROT) ? "FETCH" : "?";
+
+    LOGE("MEM FAULT: %s addr=0x%llx size=%d value=0x%llx at PC=0x%08x",
+         kind, (unsigned long long) address, size,
+         (unsigned long long) value, pc);
+
+    return false; // don't suppress the fault - just record it before it propagates
+}
+} // namespace
+
+uint64_t vxp_install_fault_logger(uc_engine* uc) {
+    if (uc == nullptr) return 0;
+    uc_hook hook;
+    uc_err err = uc_hook_add(
+        uc, &hook, UC_HOOK_MEM_INVALID,
+        reinterpret_cast<void*>(&vxp_on_invalid_mem), nullptr, 1, 0);
+    if (err != UC_ERR_OK) {
+        LOGE("uc_hook_add(MEM_INVALID) failed: %s", uc_strerror(err));
+        return 0;
+    }
+    return static_cast<uint64_t>(hook);
+}
+
+void vxp_remove_fault_logger(uc_engine* uc, uint64_t hookHandle) {
+    if (uc == nullptr || hookHandle == 0) return;
+    uc_hook_del(uc, static_cast<uc_hook>(hookHandle));
+}

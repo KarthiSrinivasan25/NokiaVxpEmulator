@@ -95,3 +95,17 @@ Java_com_nokia_vxp_memory_MemoryManager_nativeWriteBytes(
     bool ok = vxp_write_memory(uc, static_cast<uint64_t>(address), buf.data(), buf.size());
     return ok ? JNI_TRUE : JNI_FALSE;
 }
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_nokia_vxp_memory_MemoryManager_nativeInstallFaultLogger(
+        JNIEnv*, jobject, jlong handle) {
+    return static_cast<jlong>(vxp_install_fault_logger(
+        reinterpret_cast<uc_engine*>(handle)));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nokia_vxp_memory_MemoryManager_nativeRemoveFaultLogger(
+        JNIEnv*, jobject, jlong handle, jlong hookHandle) {
+    vxp_remove_fault_logger(reinterpret_cast<uc_engine*>(handle),
+                             static_cast<uint64_t>(hookHandle));
+}

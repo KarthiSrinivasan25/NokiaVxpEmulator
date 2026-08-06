@@ -21,3 +21,5 @@ bool vxp_read_memory(uc_engine* uc, uint64_t address, uint8_t* outBuffer, size_t
 
 // Rounds size up to Unicorn's required page granularity (4KB).
 uint64_t vxp_align_size_to_page(uint64_t size);
+uint64_t vxp_install_fault_logger(uc_engine* uc);
+void vxp_remove_fault_logger(uc_engine* uc, uint64_t hookHandle);
