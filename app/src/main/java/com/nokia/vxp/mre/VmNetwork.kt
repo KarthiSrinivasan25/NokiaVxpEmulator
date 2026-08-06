@@ -5,7 +5,7 @@ import com.nokia.vxp.utils.Logger
 private const val TAG = "VmNetwork"
 
 /**
- * Placeholder for network-related vm_net_*/vm_http_* API surface.
+ * Placeholder for network-related vm_net_*vm_http_* API surface.
  * Deliberately left inert (always fails, never actually connects)
  * rather than implemented - this emulator runs old, often unsigned or
  * unverified third-party VXP binaries, and silently granting them real
