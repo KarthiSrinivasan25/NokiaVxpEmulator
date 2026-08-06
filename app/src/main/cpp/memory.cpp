@@ -6,15 +6,15 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static constexpr uint64_t PAGE_SIZE = 0x1000; // 4KB, required by Unicorn/QEMU
+static constexpr uint64_t kPageSize = 0x1000; // 4KB, required by Unicorn/QEMU
 
 static uint64_t align_down(uint64_t addr) {
-    return addr & ~(PAGE_SIZE - 1);
+    return addr & ~(kPageSize - 1);
 }
 
 uint64_t vxp_align_size_to_page(uint64_t size) {
-    if (size == 0) return PAGE_SIZE;
-    return (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
+    if (size == 0) return kPageSize;
+    return (size + (kPageSize - 1)) & ~(kPageSize - 1);
 }
 
 bool vxp_map_region(uc_engine* uc, uint64_t base, uint64_t size, uint32_t perms,
