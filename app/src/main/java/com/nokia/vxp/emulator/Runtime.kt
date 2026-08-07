@@ -27,30 +27,52 @@ class Runtime private constructor(
 
     companion object {
         /** Builds a Runtime from a successful loader.LoadResult, and initializes PC/SP/LR for entry. Null on memory setup failure. */
-        fun from(loadResult: LoadResult.Success): Runtime? {
-            val memoryManager = MemoryManager()
-            if (!memoryManager.setup(loadResult.memoryLayout)) {
-                Logger.e(TAG, "MemoryManager.setup() failed - cannot build Runtime")
-                return null
-            }
+      fun from(loadResult: LoadResult.Success): Runtime? {
+    val memoryManager = MemoryManager()
 
-            val cpuState = CpuState(memoryManager)
-            cpuState.initEntry(
-                entryPoint = loadResult.memoryLayout.entryPoint,
-                initialSp = memoryManager.stack.initialStackPointer
-            )
-            if (loadResult.memoryLayout.isThumbEntry) {
-                // ELF entry point had its low bit set - standard ARM
-                // interworking convention for "this code starts in Thumb
-                // state". Set CPSR's T bit so Unicorn decodes correctly
-                // from the very first instruction.
-                val cpsrWithThumb = Flags.withBit(cpuState.getCpsr(), Flags.BIT_T, true)
-                cpuState.setCpsr(cpsrWithThumb)
-                Logger.i(TAG, "Entry point is Thumb-mode - set CPSR T bit")
-            }
+    if (!memoryManager.setup(loadResult.memoryLayout)) {
+        Logger.e(TAG, "MemoryManager.setup() failed - cannot build Runtime")
+        return null
+    }
 
-            val executor = Executor(memoryManager, cpuState)
-            return Runtime(memoryManager, cpuState, executor)
-        }
+    val cpuState = CpuState(memoryManager)
+
+    val isThumb = loadResult.memoryLayout.isThumbEntry
+
+    val entryPoint = if (isThumb) {
+        loadResult.memoryLayout.entryPoint and -2L
+    } else {
+        loadResult.memoryLayout.entryPoint
+    }
+
+    cpuState.initEntry(
+        entryPoint = entryPoint,
+        initialSp = memoryManager.stack.initialStackPointer
+    )
+
+    if (isThumb) {
+        val cpsrWithThumb = Flags.withBit(
+            cpuState.getCpsr(),
+            Flags.BIT_T,
+            true
+        )
+        cpuState.setCpsr(cpsrWithThumb)
+
+        Logger.i(
+            TAG,
+            "Thumb entry: PC=0x${entryPoint.toString(16)}"
+        )
+    }
+
+    val executor = Executor(memoryManager, cpuState)
+
+    Logger.i(
+        TAG,
+        "Runtime ready PC=0x${cpuState.getPc().toString(16)} " +
+        "SP=0x${cpuState.getSp().toString(16)}"
+    )
+
+    return Runtime(memoryManager, cpuState, executor)
+}
     }
 }
