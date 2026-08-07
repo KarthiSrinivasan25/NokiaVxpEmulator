@@ -49,7 +49,7 @@ class CpuState(private val memoryManager: MemoryManager) {
         // that happens before we've set up a real call stack, this at
         // least loops back to a mapped address instead of jumping into
         // unmapped memory and faulting.
-        setRegister(Registers.LR, entryPoint)
+        setRegister(Registers.LR, 0)
     }
 
     private external fun nativeGetRegister(handle: Long, regId: Int): Long
