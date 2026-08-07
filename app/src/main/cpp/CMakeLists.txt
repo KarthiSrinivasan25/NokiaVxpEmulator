@@ -63,6 +63,11 @@ if(VXP_HAVE_UNICORN)
             PRIVATE
             ${UNICORN_DIR}/include
     )
+    # Lets native-lib.cpp report accurately (via #ifdef) whether this
+    # build actually has the Unicorn-backed cpu/memory/mre bridges
+    # compiled in, instead of a hardcoded string that goes stale the
+    # moment the real build state changes.
+    target_compile_definitions(vxpnative PRIVATE VXP_HAVE_UNICORN_BUILD)
 endif()
 
 find_library(log-lib log)
