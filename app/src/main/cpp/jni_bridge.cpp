@@ -4,6 +4,7 @@
 
 #include "unicorn_bridge.h"
 #include "memory.h"
+#include "fault_diagnostics.h"
 
 #define LOG_TAG "VxpNative"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -94,4 +95,16 @@ Java_com_nokia_vxp_memory_MemoryManager_nativeWriteBytes(
 
     bool ok = vxp_write_memory(uc, static_cast<uint64_t>(address), buf.data(), buf.size());
     return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_nokia_vxp_memory_MemoryManager_nativeInstallFaultDiagnostics(JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
+    auto* uc = reinterpret_cast<uc_engine*>(handle);
+    return static_cast<jlong>(vxp_install_fault_diagnostics_hook(uc));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nokia_vxp_memory_MemoryManager_nativeRemoveFaultDiagnostics(JNIEnv* /*env*/, jobject /*thiz*/, jlong handle, jlong hookHandle) {
+    auto* uc = reinterpret_cast<uc_engine*>(handle);
+    vxp_remove_fault_diagnostics_hook(uc, static_cast<uint64_t>(hookHandle));
 }

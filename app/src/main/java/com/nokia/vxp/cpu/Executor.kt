@@ -38,14 +38,28 @@ class Executor(
 
         pipeline.markRunning()
         val startAddress = cpuState.getPc()
-        val code = nativeRun(handle(), startAddress, endAddress, timeoutMicros, maxInstructions)
+
+        // endAddress=0 is OUR convention for "no address limit" - but
+        // Unicorn's uc_emu_start treats `until` as a literal target
+        // address, and 0 is a real, legitimate guest address for some
+        // real VXP files (confirmed: gtrxAC/peanut.vxp's PT_LOAD segment
+        // is mapped starting exactly at vaddr 0x0). Passing 0 through
+        // unchanged would tell Unicorn to stop exactly where that guest's
+        // own code begins executing - a genuine conflict, not a "no
+        // limit" no-op. Translate our sentinel to an address guaranteed
+        // to never be legitimately reached instead.
+        val effectiveEndAddress = if (endAddress == 0L) NO_END_ADDRESS_LIMIT else endAddress
+
+        val code = nativeRun(handle(), startAddress, effectiveEndAddress, timeoutMicros, maxInstructions)
 
         return if (code == UC_ERR_OK) {
             pipeline.markPaused()
             RunResult.Ok
         } else {
             val message = nativeErrorString(code)
-            Logger.e(TAG, "run() stopped with error: $message (code=$code)")
+            val pc = cpuState.getRegister(Registers.PC)
+            val sp = cpuState.getRegister(Registers.SP)
+            Logger.e(TAG, "run() stopped with error: $message (code=$code) - PC=0x${pc.toString(16)} SP=0x${sp.toString(16)} (see logcat tag 'VxpNative' for the exact faulting address, if this was a memory fault)")
             pipeline.markFaulted(message)
             RunResult.Error(code, message)
         }
@@ -66,7 +80,8 @@ class Executor(
             RunResult.Ok
         } else {
             val message = nativeErrorString(code)
-            Logger.e(TAG, "step() failed: $message (code=$code)")
+            val pc = cpuState.getRegister(Registers.PC)
+            Logger.e(TAG, "step() failed: $message (code=$code) - PC=0x${pc.toString(16)}")
             pipeline.markFaulted(message)
             RunResult.Error(code, message)
         }
@@ -88,6 +103,14 @@ class Executor(
     private external fun nativeErrorString(code: Int): String
 
     companion object {
+        // An address guaranteed to never be legitimately reached by guest
+        // code (all real ELF segments/heap/stack live at far lower
+        // addresses per loader.ModuleMapper) - used as the "run with no
+        // specific stop address" value actually passed to Unicorn,
+        // instead of 0 (which Unicorn treats as a literal, and for some
+        // real VXP files an actually-reachable, stop address).
+        private const val NO_END_ADDRESS_LIMIT = 0xFFFFFFFFL
+
         init { System.loadLibrary("vxpnative") }
     }
 }

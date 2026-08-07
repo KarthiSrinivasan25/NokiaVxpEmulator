@@ -28,7 +28,7 @@ import kotlin.concurrent.thread
  * mre -> emulator -> graphics -> input all genuinely run, including
  * mre/VmDispatcher's guest-call trap. Since we don't know real MRE OS
  * API addresses (see mre/VmDispatcher's doc comment), a loaded game's
- * actual vm_graphic_*vm_reg_keyboard_callback calls will still fault rather
+ * actual vm_graphic_* vm_reg_keyboard_callback calls will still fault rather
  * than being handled - so onFrameRendered below still draws a
  * self-contained test pattern rather than real game output, but it DOES
  * respond to the on-screen keypad (UP/DOWN nudge the box, SELECT
@@ -118,19 +118,11 @@ class EmulatorActivity : AppCompatActivity() {
                 override fun onLoaded(versionInfo: String) {
                     runOnUiThread { statusView.text = "$versionInfo loaded. Running…" }
                     emulator.currentRuntime()?.let { runtime ->
-
-    Logger.i("MEMORY", "========== MEMORY MAP ==========")
-
-    for (region in runtime.memoryManager.regions()) {
-
-        Logger.i(
-            "MEMORY",
-            "${region.name} " +
-            "base=0x${region.baseAddress.toString(16)} " +
-            "size=0x${region.size.toString(16)}"
-        )
-    }
-}
+                        Logger.i("MemoryLayout", "Mapped regions for this session:")
+                        for (line in MemoryViewer.listRegions(runtime.memoryManager)) {
+                            Logger.i("MemoryLayout", line)
+                        }
+                    }
                     emulator.start()
                 }
 
@@ -146,30 +138,8 @@ class EmulatorActivity : AppCompatActivity() {
                 }
 
                 override fun onFault(reason: String) {
-
-    val detail = emulator.currentRuntime()?.let { runtime ->
-
-        val pc = runtime.cpuState.getPc()
-        val sp = runtime.cpuState.getSp()
-        val lr = runtime.cpuState.getLr()
-
-        """
-        Emulator faulted:
-
-        $reason
-
-        PC : 0x${pc.toString(16)}
-        SP : 0x${sp.toString(16)}
-        LR : 0x${lr.toString(16)}
-        """.trimIndent()
-
-    } ?: reason
-
-
-    runOnUiThread {
-        statusView.text = detail
-    }
-}
+                    runOnUiThread { statusView.text = "Emulator faulted: $reason" }
+                }
             })
         }
     }

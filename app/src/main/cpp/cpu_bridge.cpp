@@ -88,7 +88,14 @@ uc_err vxp_step(uc_engine* uc) {
         return err;
     }
 
-    err = uc_emu_start(uc, currentPc, /*until=*/ 0, /*timeout=*/ 0, /*count=*/ 1);
+    // `until` must NOT be a literal 0 here - Unicorn treats it as a real
+    // target address, and 0 is a legitimate guest address for some real
+    // VXP files (confirmed: gtrxAC/peanut.vxp's PT_LOAD segment starts
+    // exactly at vaddr 0x0). count=1 already bounds this to a single
+    // instruction regardless, so use a guaranteed-unreachable "until"
+    // instead - matches cpu/Executor.kt's NO_END_ADDRESS_LIMIT reasoning.
+    constexpr uint64_t NO_END_ADDRESS_LIMIT = 0xFFFFFFFFULL;
+    err = uc_emu_start(uc, currentPc, /*until=*/ NO_END_ADDRESS_LIMIT, /*timeout=*/ 0, /*count=*/ 1);
     if (err != UC_ERR_OK) {
         LOGE("vxp_step failed: %s", uc_strerror(err));
     }

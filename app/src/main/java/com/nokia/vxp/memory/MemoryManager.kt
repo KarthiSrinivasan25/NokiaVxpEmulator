@@ -19,6 +19,7 @@ private const val TAG = "MemoryManager"
 class MemoryManager : GuestMemoryReader {
 
     private var engineHandle: Long = 0
+    private var faultDiagnosticsHookHandle: Long = 0
     private val map = MemoryMap()
     private var heapImpl: Heap? = null
     private var stackImpl: Stack? = null
@@ -67,12 +68,26 @@ class MemoryManager : GuestMemoryReader {
         heapImpl = Heap(this, layout.heapRegion.baseAddress, layout.heapRegion.size)
         stackImpl = Stack(layout.stackRegion.baseAddress, layout.stackRegion.size)
 
+        // Diagnostic-only, no JNI-callback thread-affinity requirement
+        // (unlike mre.VmDispatcher's hook) - safe to install right here.
+        // Makes bare uc_err messages like "invalid memory write
+        // (UC_ERR_WRITE_UNMAPPED)" traceable to an actual guest address
+        // and PC in logcat instead of carrying no location information.
+        faultDiagnosticsHookHandle = nativeInstallFaultDiagnostics(engineHandle)
+        if (faultDiagnosticsHookHandle == 0L) {
+            Logger.w(TAG, "Fault diagnostics hook failed to install - memory faults will log with less detail")
+        }
+
         Logger.i(TAG, "Memory setup complete: ${layout.regions.size} regions mapped")
         return true
     }
 
     fun teardown() {
         if (engineHandle != 0L) {
+            if (faultDiagnosticsHookHandle != 0L) {
+                nativeRemoveFaultDiagnostics(engineHandle, faultDiagnosticsHookHandle)
+                faultDiagnosticsHookHandle = 0
+            }
             nativeDestroyEngine(engineHandle)
             engineHandle = 0L
         }
@@ -125,6 +140,8 @@ class MemoryManager : GuestMemoryReader {
     ): Boolean
     private external fun nativeReadBytes(handle: Long, address: Long, length: Int): ByteArray?
     private external fun nativeWriteBytes(handle: Long, address: Long, data: ByteArray): Boolean
+    private external fun nativeInstallFaultDiagnostics(handle: Long): Long
+    private external fun nativeRemoveFaultDiagnostics(handle: Long, hookHandle: Long)
 
     companion object {
         init {

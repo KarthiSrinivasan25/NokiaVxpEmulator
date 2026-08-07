@@ -47,6 +47,7 @@ if(VXP_HAVE_UNICORN)
         jni_cpu_bridge.cpp
         vm_dispatch_bridge.cpp
         jni_mre_bridge.cpp
+        fault_diagnostics.cpp
     )
 endif()
 
