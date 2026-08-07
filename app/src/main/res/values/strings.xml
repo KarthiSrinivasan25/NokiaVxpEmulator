@@ -3,5 +3,5 @@
     <string name="native_check_label">Native core:</string>
     <string name="btn_open_game">Open VXP Game…</string>
     <string name="btn_launch_emulator">Launch Emulator</string>
-    <string name="emulator_placeholder">Emulator surface will render here once the graphics module is wired up.</string>
+    <string name="emulator_placeholder">Loading…</string>
 </resources>

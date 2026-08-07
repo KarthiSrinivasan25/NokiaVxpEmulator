@@ -12,12 +12,10 @@ package com.nokia.vxp.memory
 class Stack(private val stackBase: Long, private val stackSize: Long) {
 
     /** SP value to load before starting execution. */
-  val initialStackPointer: Long
-    get() = ((stackBase + stackSize) - 16) and -16L
+    val initialStackPointer: Long get() = stackBase + stackSize
 
     fun isValidStackAddress(address: Long): Boolean =
-    address >= stackBase &&
-    address < stackBase + stackSize
+        address in stackBase..(stackBase + stackSize)
 
     /** Returns the new SP after pushing [bytes], or null if that would underflow the stack region. */
     fun computeSpAfterPush(currentSp: Long, bytes: Long): Long? {
