@@ -219,29 +219,15 @@ static bool onInvalidMemory(
         int64_t value,
         void* user_data) {
 
-    (void) user_data;
+    (void)user_data;
 
     uint32_t pc = 0;
     uint32_t sp = 0;
     uint32_t lr = 0;
 
-    uc_reg_read(
-        uc,
-        UC_ARM_REG_PC,
-        &pc
-    );
-
-    uc_reg_read(
-        uc,
-        UC_ARM_REG_SP,
-        &sp
-    );
-
-    uc_reg_read(
-        uc,
-        UC_ARM_REG_LR,
-        &lr
-    );
+    uc_reg_read(uc, UC_ARM_REG_PC, &pc);
+    uc_reg_read(uc, UC_ARM_REG_SP, &sp);
+    uc_reg_read(uc, UC_ARM_REG_LR, &lr);
 
     const char* access = "UNKNOWN";
 
@@ -275,19 +261,99 @@ static bool onInvalidMemory(
         "SP=0x%08x "
         "LR=0x%08x",
         access,
-        (unsigned long long) address,
+        (unsigned long long)address,
         size,
-        (unsigned long long) value,
+        (unsigned long long)value,
         pc,
         sp,
         lr
     );
 
-    // Dump every ARM register at the exact fault point.
-    logArmRegisters(uc);
+    // ---------------------------------------------------------
+    // NEW: Read the instruction bytes at the faulting PC.
+    // ---------------------------------------------------------
 
-    // Returning false tells Unicorn that the invalid access
-    // cannot be handled and emulation must stop.
+    uint8_t code[8] = {};
+
+    uc_err readErr = uc_mem_read(
+        uc,
+        (uint64_t)pc,
+        code,
+        sizeof(code)
+    );
+
+    if (readErr == UC_ERR_OK) {
+
+        LOGE(
+            "FAULT INSTRUCTION BYTES: "
+            "%02x %02x %02x %02x %02x %02x %02x %02x",
+            code[0],
+            code[1],
+            code[2],
+            code[3],
+            code[4],
+            code[5],
+            code[6],
+            code[7]
+        );
+
+    } else {
+
+        LOGE(
+            "Could not read instruction bytes at PC=0x%08x: %s",
+            pc,
+            uc_strerror(readErr)
+        );
+    }
+
+    // ---------------------------------------------------------
+    // Register dump
+    // ---------------------------------------------------------
+
+    uint32_t r0  = 0;
+    uint32_t r1  = 0;
+    uint32_t r2  = 0;
+    uint32_t r3  = 0;
+    uint32_t r4  = 0;
+    uint32_t r5  = 0;
+    uint32_t r6  = 0;
+    uint32_t r7  = 0;
+    uint32_t r8  = 0;
+    uint32_t r9  = 0;
+    uint32_t r10 = 0;
+    uint32_t r11 = 0;
+    uint32_t r12 = 0;
+    uint32_t cpsr = 0;
+
+    uc_reg_read(uc, UC_ARM_REG_R0,  &r0);
+    uc_reg_read(uc, UC_ARM_REG_R1,  &r1);
+    uc_reg_read(uc, UC_ARM_REG_R2,  &r2);
+    uc_reg_read(uc, UC_ARM_REG_R3,  &r3);
+    uc_reg_read(uc, UC_ARM_REG_R4,  &r4);
+    uc_reg_read(uc, UC_ARM_REG_R5,  &r5);
+    uc_reg_read(uc, UC_ARM_REG_R6,  &r6);
+    uc_reg_read(uc, UC_ARM_REG_R7,  &r7);
+    uc_reg_read(uc, UC_ARM_REG_R8,  &r8);
+    uc_reg_read(uc, UC_ARM_REG_R9,  &r9);
+    uc_reg_read(uc, UC_ARM_REG_R10, &r10);
+    uc_reg_read(uc, UC_ARM_REG_R11, &r11);
+    uc_reg_read(uc, UC_ARM_REG_R12, &r12);
+    uc_reg_read(uc, UC_ARM_REG_CPSR, &cpsr);
+
+    LOGE(
+        "REGS: "
+        "R0=%08x R1=%08x R2=%08x R3=%08x "
+        "R4=%08x R5=%08x R6=%08x R7=%08x "
+        "R8=%08x R9=%08x R10=%08x R11=%08x R12=%08x "
+        "SP=%08x LR=%08x PC=%08x CPSR=%08x",
+        r0, r1, r2, r3,
+        r4, r5, r6, r7,
+        r8, r9, r10, r11, r12,
+        sp, lr, pc, cpsr
+    );
+
+    // Do NOT map address 0.
+    // Let Unicorn stop execution.
     return false;
 }
 
