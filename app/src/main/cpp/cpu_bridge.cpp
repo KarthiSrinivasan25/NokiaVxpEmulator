@@ -269,6 +269,38 @@ static bool onInvalidMemory(
         lr
     );
 
+
+    // Dump 32 bytes around the faulting PC.
+uint64_t dumpStart = (pc >= 0x20) ? (uint64_t)(pc - 0x20) : 0;
+uint8_t beforeCode[64] = {};
+
+uc_err dumpErr = uc_mem_read(
+    uc,
+    dumpStart,
+    beforeCode,
+    sizeof(beforeCode)
+);
+
+if (dumpErr == UC_ERR_OK) {
+    LOGE(
+        "CODE AROUND PC=0x%08x:",
+        pc
+    );
+
+    for (int i = 0; i < 64; i += 4) {
+        uint32_t word =
+            (uint32_t)beforeCode[i] |
+            ((uint32_t)beforeCode[i + 1] << 8) |
+            ((uint32_t)beforeCode[i + 2] << 16) |
+            ((uint32_t)beforeCode[i + 3] << 24);
+
+        LOGE(
+            "  0x%08llx : %08x",
+            (unsigned long long)(dumpStart + i),
+            word
+        );
+    }
+}
     // ---------------------------------------------------------
     // NEW: Read the instruction bytes at the faulting PC.
     // ---------------------------------------------------------
