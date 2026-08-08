@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5...3.20)
+cmake_minimum_required(VERSION 3.22.1)
 project("nokiavxpemulator")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -12,11 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ---------------------------------------------------------------------------
 set(UNICORN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../external/unicorn)
 
-# Unicorn Engine configuration
-set(UNICORN_ARCHS "arm" CACHE STRING "" FORCE)
-
+set(UNICORN_ARCH "arm" CACHE STRING "" FORCE)
 set(UNICORN_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(UNICORN_BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(UNICORN_INSTALL OFF CACHE BOOL "" FORCE)
 set(UNICORN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(UNICORN_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
@@ -26,11 +23,18 @@ if(EXISTS ${UNICORN_DIR}/CMakeLists.txt)
     set(VXP_HAVE_UNICORN TRUE)
 else()
     message(WARNING
-        "external/unicorn not found at ${UNICORN_DIR} - "
-        "clone https://github.com/unicorn-engine/unicorn into external/unicorn "
-        "before building. memory.cpp/unicorn_bridge.cpp/jni_bridge.cpp depend on "
-        "<unicorn/unicorn.h> and will be EXCLUDED from this build until then; "
-        "only the native-lib.cpp scaffold will be compiled.")
+        "external/unicorn not found at ${UNICORN_DIR}. Clone Unicorn 2.x "
+        "specifically (NOT the default branch, which may resolve to an "
+        "older tag on some mirrors/zips) - the 1.x QEMU-fork build needs "
+        "a bash configure script to generate config-host.h, which does "
+        "NOT run automatically via CMake on Windows and will fail with "
+        "'config-host.h file not found'. Unicorn 2.x's build is pure "
+        "CMake and doesn't have this problem:\n"
+        "  git clone --depth 1 --branch 2.1.4 "
+        "https://github.com/unicorn-engine/unicorn.git external/unicorn\n"
+        "memory.cpp/unicorn_bridge.cpp/jni_bridge.cpp depend on "
+        "<unicorn/unicorn.h> and will be EXCLUDED from this build until "
+        "then; only the native-lib.cpp scaffold will be compiled.")
     set(VXP_HAVE_UNICORN FALSE)
 endif()
 
