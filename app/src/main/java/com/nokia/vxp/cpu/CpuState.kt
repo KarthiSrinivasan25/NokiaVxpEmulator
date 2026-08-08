@@ -9,35 +9,46 @@ private const val TAG = "CpuState"
 
 * Register-level view into one running emulator's CPU state.
 *
-* Registers and memory live in the same Unicorn uc_engine instance,
+* Registers and memory live in the same Unicorn engine instance,
 * so this class borrows MemoryManager's engine handle rather than
 * owning its own engine.
   */
-  class CpuState(private val memoryManager: MemoryManager) {
+  class CpuState(
+  private val memoryManager: MemoryManager
+  ) {
 
   private fun handle(): Long = memoryManager.nativeEngineHandle()
 
   fun getRegister(reg: Registers): Long {
   if (!memoryManager.isEngineReady) {
   Logger.w(TAG, "getRegister($reg) called before engine setup")
-  return 0
+  return 0L
   }
 
-  ```
-   return nativeGetRegister(handle(), reg.id)
-  ```
+
+   return nativeGetRegister(
+       handle(),
+       reg.id
+   )
+
 
   }
 
-  fun setRegister(reg: Registers, value: Long): Boolean {
+  fun setRegister(
+  reg: Registers,
+  value: Long
+  ): Boolean {
   if (!memoryManager.isEngineReady) {
   Logger.w(TAG, "setRegister($reg) called before engine setup")
   return false
   }
 
-  ```
-   return nativeSetRegister(handle(), reg.id, value)
-  ```
+
+   return nativeSetRegister(
+       handle(),
+       reg.id,
+       value
+   )
 
   }
 
@@ -58,26 +69,36 @@ private const val TAG = "CpuState"
 
   /**
 
-  * Snapshot of every register, e.g. for debug.RegisterViewer.
+  * Snapshot of every register, useful for debugger/register viewer.
     */
     fun snapshot(): Map<Registers, Long> =
     Registers.values().associateWith { getRegister(it) }
 
   /**
 
-  * Initializes SP/PC/LR for a freshly mapped module before the
-  * first run/step call.
+  * Initialize the CPU state before the first execution.
     */
     fun initEntry(
     entryPoint: Long,
     initialSp: Long
     ) {
-    setRegister(Registers.PC, entryPoint)
-    setRegister(Registers.SP, initialSp)
+    setRegister(
+    Registers.PC,
+    entryPoint
+    )
 
-    // Top-level MRE stubs may use `bx lr` as a return-to-loader
-    // convention before a real call stack exists.
-    setRegister(Registers.LR, entryPoint)
+    setRegister(
+    Registers.SP,
+    initialSp
+    )
+
+    // Keep LR pointing at the entry point initially.
+    // This prevents an immediate jump into an arbitrary unmapped
+    // address if a top-level stub executes "bx lr".
+    setRegister(
+    Registers.LR,
+    entryPoint
+    )
     }
 
   private external fun nativeGetRegister(
