@@ -1,80 +1,99 @@
-package com.nokia.vxp.nativecore
+package com.nokia.vxp.cpu
+
+import com.nokia.vxp.memory.MemoryManager
+import com.nokia.vxp.utils.Logger
+
+private const val TAG = "CpuState"
 
 /**
 
-* Thin JNI bridge to the native C++ emulator core.
+* Register-level view into one running emulator's CPU state.
 *
-* This object:
-* * loads libvxpnative.so
-* * verifies the native library through nativeInit()
-* * exposes the native build/version string
-*
-* Per-VXP Unicorn engine creation is intentionally handled by
-* MemoryManager/Runtime rather than here.
+* Registers and memory live in the same Unicorn uc_engine instance,
+* so this class borrows MemoryManager's engine handle rather than
+* owning its own engine.
   */
-  object NativeBridge {
+  class CpuState(private val memoryManager: MemoryManager) {
 
-  private var loaded = false
-  private var initialized = false
-  private var loadError: String? = null
+  private fun handle(): Long = memoryManager.nativeEngineHandle()
 
-  init {
-  try {
-  System.loadLibrary("vxpnative")
-  loaded = true
+  fun getRegister(reg: Registers): Long {
+  if (!memoryManager.isEngineReady) {
+  Logger.w(TAG, "getRegister($reg) called before engine setup")
+  return 0
+  }
 
-       // Verify that the JNI bridge is callable.
-       initialized = nativeInit()
-
-       if (!initialized) {
-           loadError = "nativeInit() returned false"
-       }
-   } catch (e: UnsatisfiedLinkError) {
-       loaded = false
-       initialized = false
-       loadError = e.message
-   } catch (e: Exception) {
-       loaded = false
-       initialized = false
-       loadError = e.message
-   }
-
+  ```
+   return nativeGetRegister(handle(), reg.id)
+  ```
 
   }
 
+  fun setRegister(reg: Registers, value: Long): Boolean {
+  if (!memoryManager.isEngineReady) {
+  Logger.w(TAG, "setRegister($reg) called before engine setup")
+  return false
+  }
+
+  ```
+   return nativeSetRegister(handle(), reg.id, value)
+  ```
+
+  }
+
+  fun getCpsr(): Long =
+  getRegister(Registers.CPSR)
+
+  fun setCpsr(value: Long): Boolean =
+  setRegister(Registers.CPSR, value)
+
+  fun getPc(): Long =
+  getRegister(Registers.PC)
+
+  fun getSp(): Long =
+  getRegister(Registers.SP)
+
+  fun getLr(): Long =
+  getRegister(Registers.LR)
+
   /**
 
-  * True when libvxpnative.so was loaded successfully.
+  * Snapshot of every register, e.g. for debug.RegisterViewer.
     */
-    val isLoaded: Boolean
-    get() = loaded
+    fun snapshot(): Map<Registers, Long> =
+    Registers.values().associateWith { getRegister(it) }
 
   /**
 
-  * True when the native initialization check completed successfully.
+  * Initializes SP/PC/LR for a freshly mapped module before the
+  * first run/step call.
     */
-    val isInitialized: Boolean
-    get() = initialized
+    fun initEntry(
+    entryPoint: Long,
+    initialSp: Long
+    ) {
+    setRegister(Registers.PC, entryPoint)
+    setRegister(Registers.SP, initialSp)
 
-  /**
-
-  * Error message from library loading or native initialization.
-    */
-    val lastLoadError: String?
-    get() = loadError
-
-  /**
-
-  * Returns a human-readable native core/build description.
-    */
-    external fun getNativeVersion(): String
-
-  /**
-
-  * One-time native initialization check.
-  *
-  * The actual Unicorn engine is created per VXP Runtime/session,
-  * not here.
-    */
-    external fun nativeInit(): Boolean
+    // Top-level MRE stubs may use `bx lr` as a return-to-loader
+    // convention before a real call stack exists.
+    setRegister(Registers.LR, entryPoint)
     }
+
+  private external fun nativeGetRegister(
+  handle: Long,
+  regId: Int
+  ): Long
+
+  private external fun nativeSetRegister(
+  handle: Long,
+  regId: Int,
+  value: Long
+  ): Boolean
+
+  companion object {
+  init {
+  System.loadLibrary("vxpnative")
+  }
+  }
+  }
