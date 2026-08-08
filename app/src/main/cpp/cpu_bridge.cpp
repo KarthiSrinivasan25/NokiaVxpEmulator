@@ -263,7 +263,7 @@ static void dumpCodeAroundPC(
     if (uc == nullptr)
         return;
 
-    constexpr uint64_t DUMP_SIZE = 64;
+    constexpr uint64_t DUMP_SIZE = 80;
 
     const uint64_t dumpStart =
         (pc >= 0x40)
@@ -286,14 +286,10 @@ static void dumpCodeAroundPC(
             pc,
             uc_strerror(err)
         );
-
         return;
     }
 
-    LOGE(
-        "CODE AROUND PC=0x%08x:",
-        pc
-    );
+    LOGE("CODE AROUND PC=0x%08x:", pc);
 
     for (size_t i = 0; i < DUMP_SIZE; i += 4)
     {
