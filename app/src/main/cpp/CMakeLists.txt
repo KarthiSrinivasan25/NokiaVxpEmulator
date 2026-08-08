@@ -23,11 +23,18 @@ if(EXISTS ${UNICORN_DIR}/CMakeLists.txt)
     set(VXP_HAVE_UNICORN TRUE)
 else()
     message(WARNING
-        "external/unicorn not found at ${UNICORN_DIR} - "
-        "clone https://github.com/unicorn-engine/unicorn into external/unicorn "
-        "before building. memory.cpp/unicorn_bridge.cpp/jni_bridge.cpp depend on "
-        "<unicorn/unicorn.h> and will be EXCLUDED from this build until then; "
-        "only the native-lib.cpp scaffold will be compiled.")
+        "external/unicorn not found at ${UNICORN_DIR}. Clone Unicorn 2.x "
+        "specifically (NOT the default branch, which may resolve to an "
+        "older tag on some mirrors/zips) - the 1.x QEMU-fork build needs "
+        "a bash configure script to generate config-host.h, which does "
+        "NOT run automatically via CMake on Windows and will fail with "
+        "'config-host.h file not found'. Unicorn 2.x's build is pure "
+        "CMake and doesn't have this problem:\n"
+        "  git clone --depth 1 --branch 2.1.4 "
+        "https://github.com/unicorn-engine/unicorn.git external/unicorn\n"
+        "memory.cpp/unicorn_bridge.cpp/jni_bridge.cpp depend on "
+        "<unicorn/unicorn.h> and will be EXCLUDED from this build until "
+        "then; only the native-lib.cpp scaffold will be compiled.")
     set(VXP_HAVE_UNICORN FALSE)
 endif()
 
