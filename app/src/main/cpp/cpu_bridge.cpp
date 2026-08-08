@@ -63,15 +63,97 @@ bool vxp_set_register(uc_engine* uc, int regId, uint32_t value) {
     return true;
 }
 
+
+static bool onInvalidMemory(
+        uc_engine* uc,
+        uc_mem_type type,
+        uint64_t address,
+        int size,
+        int64_t value,
+        void* user_data) {
+
+    uint32_t pc = 0;
+    uc_reg_read(uc, UC_ARM_REG_PC, &pc);
+
+    const char* access = "UNKNOWN";
+
+    switch (type) {
+        case UC_MEM_READ_UNMAPPED:
+        case UC_MEM_READ_PROT:
+            access = "READ";
+            break;
+
+        case UC_MEM_WRITE_UNMAPPED:
+        case UC_MEM_WRITE_PROT:
+            access = "WRITE";
+            break;
+
+        case UC_MEM_FETCH_UNMAPPED:
+        case UC_MEM_FETCH_PROT:
+            access = "FETCH";
+            break;
+
+        default:
+            break;
+    }
+
+    LOGE(
+        "INVALID MEMORY: type=%s address=0x%llx size=%d value=0x%llx PC=0x%08x",
+        access,
+        (unsigned long long)address,
+        size,
+        (unsigned long long)value,
+        pc
+    );
+
+    return false;
+}
+
 uc_err vxp_run(uc_engine* uc, uint64_t startAddress, uint64_t endAddress,
                uint64_t timeoutMicros, size_t maxInstructions) {
+
     if (uc == nullptr) return UC_ERR_HANDLE;
 
-    uc_err err = uc_emu_start(uc, startAddress, endAddress, timeoutMicros, maxInstructions);
-    if (err != UC_ERR_OK) {
-        LOGE("uc_emu_start(start=0x%llx, end=0x%llx) failed: %s",
-             (unsigned long long) startAddress, (unsigned long long) endAddress, uc_strerror(err));
+    uc_hook invalidHook;
+
+    uc_err hookErr = uc_hook_add(
+        uc,
+        &invalidHook,
+        UC_HOOK_MEM_INVALID,
+        (void*)onInvalidMemory,
+        nullptr,
+        1,
+        0
+    );
+
+    if (hookErr != UC_ERR_OK) {
+        LOGE("Failed to install invalid-memory hook: %s",
+             uc_strerror(hookErr));
     }
+
+    LOGI(
+        "Starting VXP: start=0x%llx end=0x%llx",
+        (unsigned long long)startAddress,
+        (unsigned long long)endAddress
+    );
+
+    uc_err err = uc_emu_start(
+        uc,
+        startAddress,
+        endAddress,
+        timeoutMicros,
+        maxInstructions
+    );
+
+    if (err != UC_ERR_OK) {
+        LOGE(
+            "uc_emu_start(start=0x%llx, end=0x%llx) failed: %s",
+            (unsigned long long)startAddress,
+            (unsigned long long)endAddress,
+            uc_strerror(err)
+        );
+    }
+
     return err;
 }
 
