@@ -1,4 +1,4 @@
-```kotlin
+
 package com.nokia.vxp.memory
 
 import com.nokia.vxp.loader.MappedRegion
