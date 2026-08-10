@@ -15,22 +15,22 @@
     __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 
-static constexpr uint64_t PAGE_SIZE = 0x1000;
+static constexpr uint64_t VXP_PAGE_SIZE  = 0x1000;
 
 
 static uint64_t align_down(uint64_t address) {
-    return address & ~(PAGE_SIZE - 1);
+    return address & ~(VXP_PAGE_SIZE  - 1);
 }
 
 
 static uint64_t align_up(uint64_t value) {
 
     if (value == 0) {
-        return PAGE_SIZE;
+        return VXP_PAGE_SIZE ;
     }
 
-    return (value + PAGE_SIZE - 1) &
-           ~(PAGE_SIZE - 1);
+    return (value + VXP_PAGE_SIZE  - 1) &
+           ~(VXP_PAGE_SIZE  - 1);
 }
 
 
