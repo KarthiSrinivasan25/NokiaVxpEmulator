@@ -1,12 +1,10 @@
-
 package com.nokia.vxp.memory
 
 /**
- * Runtime-side region descriptor.
- *
- * This is distinct from loader.MappedRegion, which describes the
- * loader's intended mapping. MemoryManager consumes MappedRegion and
- * produces MemoryRegion after mapping.
+ * Runtime-side region descriptor - what MemoryManager actually mapped.
+ * (Distinct from loader.MappedRegion, which is the loader's *intent*
+ * before mapping; ModuleMapper produces that, MemoryManager consumes it
+ * and produces these.)
  */
 data class MemoryRegion(
     val name: String,
@@ -16,32 +14,16 @@ data class MemoryRegion(
     val writable: Boolean,
     val executable: Boolean
 ) {
+    val endAddress: Long get() = baseAddress + size
 
-    val endAddress: Long
-        get() = baseAddress + size
+    fun contains(address: Long): Boolean = address in baseAddress until endAddress
 
-    fun contains(address: Long): Boolean {
-        return address in baseAddress until endAddress
-    }
-
-    /**
-     * Bitmask matching Unicorn's UC_PROT_READ/WRITE/EXEC values.
-     */
+    /** Bitmask matching Unicorn's UC_PROT_READ/WRITE/EXEC exactly. */
     fun toUnicornPerms(): Int {
         var perms = 0
-
-        if (readable) {
-            perms = perms or PROT_READ
-        }
-
-        if (writable) {
-            perms = perms or PROT_WRITE
-        }
-
-        if (executable) {
-            perms = perms or PROT_EXEC
-        }
-
+        if (readable) perms = perms or PROT_READ
+        if (writable) perms = perms or PROT_WRITE
+        if (executable) perms = perms or PROT_EXEC
         return perms
     }
 
