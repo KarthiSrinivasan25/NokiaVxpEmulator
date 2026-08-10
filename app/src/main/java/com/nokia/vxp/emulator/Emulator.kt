@@ -90,7 +90,7 @@ class Emulator(
                 VmAudio.registerHandlers(vmDispatcher, audioManager)
                 VmFile.registerHandlers(vmDispatcher)
                 VmNetwork.registerHandlers(vmDispatcher)
-                graphicsEngine?.let { VmGraphics.registerHandlers(vmDispatcher, it) }
+                graphicsEngine?.let { VmGraphics.registerHandlers(vmDispatcher, it, builtRuntime.memoryManager) }
                 inputManager?.let { VmInput.registerHandlers(vmDispatcher, it) }
 
                 // Now that every handler is registered (and therefore every
