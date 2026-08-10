@@ -1,47 +1,127 @@
+#include "cpu_bridge.h"
+
+#include <android/log.h>
 #include <cstdint>
-#include <cstring>
+#include <cstddef>
 
-#include <unicorn/unicorn.h>
+#define LOG_TAG "VxpNative"
 
-//
-// cpu_bridge.cpp
-//
-// IMPORTANT:
-// This file contains ONLY the generic VXP/Unicorn CPU bridge.
-//
-// JNI functions belong in:
-//     jni_cpu_bridge.cpp
-//
-// Do NOT put Java_com_nokia_vxp_cpu_* functions in this file.
-//
+#define LOGI(...) \
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-namespace {
+#define LOGE(...) \
+    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static inline bool valid_engine(uc_engine* uc) {
-    return uc != nullptr;
+#define LOGW(...) \
+    __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+
+
+// -----------------------------------------------------------------------------
+// VXP register ID -> Unicorn ARM register ID
+// -----------------------------------------------------------------------------
+
+static int toUnicornRegId(int regId) {
+    switch (regId) {
+
+        case VXP_REG_R0:
+            return UC_ARM_REG_R0;
+
+        case VXP_REG_R1:
+            return UC_ARM_REG_R1;
+
+        case VXP_REG_R2:
+            return UC_ARM_REG_R2;
+
+        case VXP_REG_R3:
+            return UC_ARM_REG_R3;
+
+        case VXP_REG_R4:
+            return UC_ARM_REG_R4;
+
+        case VXP_REG_R5:
+            return UC_ARM_REG_R5;
+
+        case VXP_REG_R6:
+            return UC_ARM_REG_R6;
+
+        case VXP_REG_R7:
+            return UC_ARM_REG_R7;
+
+        case VXP_REG_R8:
+            return UC_ARM_REG_R8;
+
+        case VXP_REG_R9:
+            return UC_ARM_REG_R9;
+
+        case VXP_REG_R10:
+            return UC_ARM_REG_R10;
+
+        case VXP_REG_R11:
+            return UC_ARM_REG_R11;
+
+        case VXP_REG_R12:
+            return UC_ARM_REG_R12;
+
+        case VXP_REG_SP:
+            return UC_ARM_REG_SP;
+
+        case VXP_REG_LR:
+            return UC_ARM_REG_LR;
+
+        case VXP_REG_PC:
+            return UC_ARM_REG_PC;
+
+        case VXP_REG_CPSR:
+            return UC_ARM_REG_CPSR;
+
+        default:
+            LOGW(
+                "toUnicornRegId: unknown VxpRegisterId %d",
+                regId
+            );
+            return -1;
+    }
 }
 
-} // namespace
 
-
-// ============================================================================
+// -----------------------------------------------------------------------------
 // Register access
-// ============================================================================
+// -----------------------------------------------------------------------------
 
-uint32_t vxp_get_register(uc_engine* uc, int reg) {
-    if (!valid_engine(uc)) {
+uint32_t vxp_get_register(
+        uc_engine* uc,
+        int regId) {
+
+    if (uc == nullptr) {
+        LOGE("vxp_get_register: null Unicorn handle");
+        return 0;
+    }
+
+    const int ucReg = toUnicornRegId(regId);
+
+    if (ucReg < 0) {
+        LOGE(
+            "vxp_get_register: invalid register id %d",
+            regId
+        );
         return 0;
     }
 
     uint32_t value = 0;
 
-    uc_err err = uc_reg_read(
+    const uc_err err = uc_reg_read(
         uc,
-        reg,
+        ucReg,
         &value
     );
 
     if (err != UC_ERR_OK) {
+        LOGE(
+            "uc_reg_read(regId=%d) failed: %s",
+            regId,
+            uc_strerror(err)
+        );
+
         return 0;
     }
 
@@ -49,109 +129,172 @@ uint32_t vxp_get_register(uc_engine* uc, int reg) {
 }
 
 
-void vxp_set_register(
-    uc_engine* uc,
-    int reg,
-    uint32_t value
-) {
-    if (!valid_engine(uc)) {
-        return;
+bool vxp_set_register(
+        uc_engine* uc,
+        int regId,
+        uint32_t value) {
+
+    if (uc == nullptr) {
+        LOGE("vxp_set_register: null Unicorn handle");
+        return false;
     }
 
-    uc_reg_write(
+    const int ucReg = toUnicornRegId(regId);
+
+    if (ucReg < 0) {
+        LOGE(
+            "vxp_set_register: invalid register id %d",
+            regId
+        );
+        return false;
+    }
+
+    const uc_err err = uc_reg_write(
         uc,
-        reg,
+        ucReg,
         &value
     );
+
+    if (err != UC_ERR_OK) {
+        LOGE(
+            "uc_reg_write(regId=%d, value=0x%08x) failed: %s",
+            regId,
+            value,
+            uc_strerror(err)
+        );
+
+        return false;
+    }
+
+    return true;
 }
 
 
-// ============================================================================
-// CPU execution
-// ============================================================================
+// -----------------------------------------------------------------------------
+// Run
+// -----------------------------------------------------------------------------
 
 uc_err vxp_run(
-    uc_engine* uc,
-    uint64_t start,
-    uint64_t end,
-    uint64_t timeout,
-    uint64_t count
-) {
-    if (!valid_engine(uc)) {
+        uc_engine* uc,
+        uint64_t startAddress,
+        uint64_t endAddress,
+        uint64_t timeoutMicros,
+        size_t maxInstructions) {
+
+    if (uc == nullptr) {
+        LOGE("vxp_run: null Unicorn handle");
         return UC_ERR_HANDLE;
     }
 
-    /*
-     * Unicorn:
-     *
-     * uc_emu_start(
-     *     uc,
-     *     begin,
-     *     until,
-     *     timeout,
-     *     count
-     * );
-     *
-     * count == 0 means execute until the end address,
-     * timeout == 0 means no timeout.
-     */
-
-    return uc_emu_start(
-        uc,
-        start,
-        end,
-        timeout,
-        count
+    LOGI(
+        "vxp_run: start=0x%llx end=0x%llx timeout=%llu count=%zu",
+        static_cast<unsigned long long>(startAddress),
+        static_cast<unsigned long long>(endAddress),
+        static_cast<unsigned long long>(timeoutMicros),
+        maxInstructions
     );
+
+    const uc_err err = uc_emu_start(
+        uc,
+        startAddress,
+        endAddress,
+        timeoutMicros,
+        maxInstructions
+    );
+
+    if (err != UC_ERR_OK) {
+        LOGE(
+            "uc_emu_start(start=0x%llx, end=0x%llx) failed: %s",
+            static_cast<unsigned long long>(startAddress),
+            static_cast<unsigned long long>(endAddress),
+            uc_strerror(err)
+        );
+    }
+
+    return err;
 }
 
 
-// ============================================================================
+// -----------------------------------------------------------------------------
 // Single-step
-// ============================================================================
+// -----------------------------------------------------------------------------
 
-uc_err vxp_step(uc_engine* uc) {
-    if (!valid_engine(uc)) {
+uc_err vxp_step(
+        uc_engine* uc) {
+
+    if (uc == nullptr) {
+        LOGE("vxp_step: null Unicorn handle");
         return UC_ERR_HANDLE;
     }
 
-    uint32_t pc = 0;
+    uint32_t currentPc = 0;
 
     uc_err err = uc_reg_read(
         uc,
         UC_ARM_REG_PC,
-        &pc
+        &currentPc
     );
 
     if (err != UC_ERR_OK) {
+        LOGE(
+            "vxp_step: failed to read current PC: %s",
+            uc_strerror(err)
+        );
+
         return err;
     }
 
     /*
-     * Execute exactly one ARM instruction.
+     * Important:
      *
-     * The current PC is used as the start address.
-     * count = 1 guarantees a single instruction.
+     * uc_emu_start(begin, until, timeout, count)
+     *
+     * The `begin` address is used as the starting PC.
+     *
+     * Therefore we must use the actual current PC here.
+     *
+     * count=1 guarantees that only one instruction is executed.
      */
+    constexpr uint64_t NO_END_ADDRESS_LIMIT = 0xFFFFFFFFULL;
 
-    return uc_emu_start(
+    err = uc_emu_start(
         uc,
-        static_cast<uint64_t>(pc),
-        0,
+        static_cast<uint64_t>(currentPc),
+        NO_END_ADDRESS_LIMIT,
         0,
         1
     );
+
+    if (err != UC_ERR_OK) {
+        LOGE(
+            "vxp_step: PC=0x%08x failed: %s",
+            currentPc,
+            uc_strerror(err)
+        );
+    }
+
+    return err;
 }
 
 
-// ============================================================================
-// Stop execution
-// ============================================================================
+// -----------------------------------------------------------------------------
+// Stop
+// -----------------------------------------------------------------------------
 
-uc_err vxp_stop(uc_engine* uc) {
-    if (!valid_engine(uc)) {
-        return UC_ERR_HANDLE;
+void vxp_stop(
+        uc_engine* uc) {
+
+    if (uc == nullptr) {
+        LOGW("vxp_stop: null Unicorn handle");
+        return;
     }
 
-    return uc_emu_stop(uc);
+    const uc_err err = uc_emu_stop(uc);
+
+    if (err != UC_ERR_OK) {
+        LOGE(
+            "uc_emu_stop failed: %s",
+            uc_strerror(err)
+        );
+    }
 }
