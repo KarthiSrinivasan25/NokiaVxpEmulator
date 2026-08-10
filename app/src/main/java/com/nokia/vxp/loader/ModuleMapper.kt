@@ -10,64 +10,41 @@ data class MappedRegion(
     val readable: Boolean,
     val writable: Boolean,
     val executable: Boolean,
-    /** Initial content to copy in at map time, or null for zero-filled (e.g. heap/stack, or a segment's .bss tail). */
+    /** Initial content to copy in at map time, or null for zero-filled. */
     val initialContent: ByteArray? = null
 )
 
-/**
- * Full memory layout for one loaded VXP module: the ELF's own PT_LOAD
- * segments (mapped at their real ELF virtual addresses) plus a heap and
- * stack region placed safely after them. memory.MemoryManager consumes
- * this to actually set up Unicorn's mappings.
- *
- * ON ELF RELOCATIONS: a real sample (gtrxAC/peanut.vxp, MIT licensed)
- * turned out to be ET_DYN (position-independent) with .rel.dyn/.rel.plt
- * sections present - normally that would mean relocations need
- * processing at load time (e.g. R_ARM_RELATIVE entries adding a load
- * bias to each patched address). This mapper deliberately loads every
- * segment at its exact file vaddr rather than rebasing anywhere else,
- * which makes the load bias always zero - so those relocations are
- * no-ops under this strategy specifically, and can be safely skipped.
- * This stops being true if this mapper is ever changed to load modules
- * at a different/dynamic base address (e.g. to run several VXP modules
- * side by side) - relocation processing would need to be added then.
- */
 data class ModuleMemoryLayout(
     val entryPoint: Long,
     val isThumbEntry: Boolean,
-    val regions: List<MappedRegion>
+    val regions: List<MappedRegion>,
+    /** ARM/ADS static-base value. For these MRE images this is ER_ZI base. */
+    val staticBaseAddress: Long = 0L
 ) {
     val heapRegion: MappedRegion get() = regions.first { it.name == "heap" }
     val stackRegion: MappedRegion get() = regions.first { it.name == "stack" }
-
-    /** The ELF-derived loadable segments, in the order they appeared in the program header table. */
     val segmentRegions: List<MappedRegion> get() = regions.filter { it.name.startsWith("segment") }
 }
 
 object ModuleMapper {
-
-    // Small page-align helper kept local to this file rather than importing
-    // memory.Page, to avoid loader/ taking a dependency on memory/ (memory/
-    // already depends on loader/ - adding the reverse would create a cycle).
     private const val PAGE_SIZE = 0x1000L
-    private fun alignUp(value: Long): Long {
-        if (value <= 0) return PAGE_SIZE
-        return (value + PAGE_SIZE - 1) and (PAGE_SIZE - 1).inv()
-    }
+    private const val SHF_WRITE = 0x1L
+    private const val SHF_ALLOC = 0x2L
+    private const val SHT_PROGBITS = 1
+    private const val SHT_NOBITS = 8
+
+    private fun alignDown(value: Long): Long = value and (PAGE_SIZE - 1).inv()
+    private fun alignUp(value: Long): Long =
+        if (value <= 0) PAGE_SIZE else (value + PAGE_SIZE - 1) and (PAGE_SIZE - 1).inv()
 
     fun map(vxpFile: VxpFile): ModuleMemoryLayout {
         val loadableSegments = vxpFile.programHeaders.filter { it.isLoadable }
 
         val segmentRegions = loadableSegments.mapIndexed { index, ph ->
-            val fileBytes = vxpFile.elfBytes.copyOfRange(ph.offset.toInt(), (ph.offset + ph.fileSize).toInt())
-            // memSize can exceed fileSize (the difference is .bss - zero-initialized
-            // data not stored in the file); pad with zeros up to memSize so the
-            // mapped region is the full size the ELF says it needs.
-            val content = if (ph.memSize > ph.fileSize) {
-                fileBytes.copyOf(ph.memSize.toInt()) // copyOf zero-pads the extra space
-            } else {
-                fileBytes
-            }
+            val fileStart = ph.offset.toInt()
+            val fileEnd = (ph.offset + ph.fileSize).toInt()
+            val fileBytes = vxpFile.elfBytes.copyOfRange(fileStart, fileEnd)
+            val content = if (ph.memSize > ph.fileSize) fileBytes.copyOf(ph.memSize.toInt()) else fileBytes
 
             MappedRegion(
                 name = "segment$index",
@@ -80,38 +57,87 @@ object ModuleMapper {
             )
         }
 
-        // Place heap/stack safely after the highest ELF segment, rather
-        // than at fixed addresses that could collide with wherever the
-        // real ELF's vaddrs actually land.
+        /*
+         * MediaTek/ADS VXP files commonly use a custom scatter layout:
+         * the ELF PT_LOAD may contain only ER_RO, while ER_RW/ER_ZI are
+         * described by section headers and live at low guest addresses.
+         * The uploaded Gamebox has exactly this layout:
+         *   ER_RW @ 0x00000000, size 0x10c
+         *   ER_ZI @ 0x0000010c, size 0x970
+         *
+         * If these sections are not mapped, the CRT/startup code reaches
+         * stores such as [r9] and immediately produces WRITE_UNMAPPED.
+         */
+        val writableAllocSections = vxpFile.sectionHeaders.filter { section ->
+            section.type == SHT_PROGBITS || section.type == SHT_NOBITS
+        }.filter { section ->
+            (section.flags and SHF_ALLOC) != 0L && (section.flags and SHF_WRITE) != 0L && section.size > 0
+        }
+
+        val runtimeDataRegion = if (writableAllocSections.isNotEmpty()) {
+            val start = writableAllocSections.minOf { it.addr }
+            val end = writableAllocSections.maxOf { it.addr + it.size }
+            val base = alignDown(start)
+            val endAligned = alignUp(end)
+            val bytes = ByteArray((endAligned - base).toInt())
+
+            for (section in writableAllocSections) {
+                val dst = (section.addr - base).toInt()
+                if (section.type == SHT_PROGBITS) {
+                    val srcStart = section.offset.toInt()
+                    val srcEnd = (section.offset + section.size).toInt()
+                    if (srcStart >= 0 && srcEnd <= vxpFile.elfBytes.size && dst >= 0 && dst + (srcEnd - srcStart) <= bytes.size) {
+                        vxpFile.elfBytes.copyInto(bytes, dst, srcStart, srcEnd)
+                    }
+                }
+                // SHT_NOBITS (ER_ZI) intentionally remains zero-filled.
+            }
+
+            MappedRegion(
+                name = "runtimeData",
+                baseAddress = base,
+                size = endAligned - base,
+                readable = true,
+                writable = true,
+                executable = false,
+                initialContent = bytes
+            )
+        } else null
+
+        // ADS/MRE startup uses R9 as the static base. ER_ZI is the static
+        // base in the Gamebox image (0x10c). Fall back to runtimeData base.
+        val ziBase = vxpFile.sectionHeaders.firstOrNull { it.name == "ER_ZI" }?.addr
+        val staticBase = ziBase ?: runtimeDataRegion?.baseAddress ?: 0L
+
         val highestSegmentEnd = segmentRegions.maxOfOrNull { it.baseAddress + it.size } ?: 0L
-        val heapBase = alignUp(highestSegmentEnd + PAGE_SIZE) // one-page gap as a guard against off-by-one overruns
+        val highestRuntimeEnd = runtimeDataRegion?.let { it.baseAddress + it.size } ?: 0L
+        val highestLoadedEnd = maxOf(highestSegmentEnd, highestRuntimeEnd)
+        val heapBase = alignUp(highestLoadedEnd + PAGE_SIZE)
         val heapSize = alignUp(Constants.DEFAULT_HEAP_SIZE)
         val stackBase = alignUp(heapBase + heapSize + PAGE_SIZE)
         val stackSize = alignUp(Constants.DEFAULT_STACK_SIZE)
 
         val heapRegion = MappedRegion(
-            name = "heap",
-            baseAddress = heapBase,
-            size = heapSize,
-            readable = true,
-            writable = true,
-            executable = false,
-            initialContent = null
+            name = "heap", baseAddress = heapBase, size = heapSize,
+            readable = true, writable = true, executable = false
         )
         val stackRegion = MappedRegion(
-            name = "stack",
-            baseAddress = stackBase,
-            size = stackSize,
-            readable = true,
-            writable = true,
-            executable = false,
-            initialContent = null
+            name = "stack", baseAddress = stackBase, size = stackSize,
+            readable = true, writable = true, executable = false
         )
+
+        val regions = buildList {
+            if (runtimeDataRegion != null) add(runtimeDataRegion)
+            addAll(segmentRegions)
+            add(heapRegion)
+            add(stackRegion)
+        }
 
         return ModuleMemoryLayout(
             entryPoint = vxpFile.header.realEntryAddress,
             isThumbEntry = vxpFile.header.isThumbEntry,
-            regions = segmentRegions + heapRegion + stackRegion
+            regions = regions,
+            staticBaseAddress = staticBase
         )
     }
 }

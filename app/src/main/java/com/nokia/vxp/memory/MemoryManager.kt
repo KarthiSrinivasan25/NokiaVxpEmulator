@@ -40,6 +40,7 @@ class MemoryManager : GuestMemoryReader {
         }
         engineHandle = handle
 
+        Logger.i(TAG, "Preparing ${layout.regions.size} memory regions; staticBase(R9)=0x${layout.staticBaseAddress.toString(16)}")
         for (region in layout.regions) {
             val kotlinRegion = toMemoryRegion(region)
             val ok = nativeMapRegion(
