@@ -30,6 +30,31 @@ VxpErr faultToErr(ArmFault fault) {
     return VXP_ERR_INSN_INVALID;
 }
 
+// Real ARM cores (and Unicorn/QEMU, which this replaces) treat bit0 of
+// any *directly written* PC value as an ARM/Thumb interworking selector -
+// the same convention ELF entry points and Thumb function pointers use
+// (an odd address means "this is a Thumb target"): writing 0x951D to PC
+// switches CPSR.T on and actually starts execution at 0x951C. This is
+// NOT something arm_cpu.cpp's execBranchExchange() needs to duplicate
+// (BX/BLX already do their own bit0 handling per-instruction) - it only
+// matters for the two places PC gets set *from the outside*, bypassing
+// any instruction: CpuState.setRegister(PC, ...) (initEntry() et al,
+// here) and vxp_run()'s own startAddress seed (below). Skipping this
+// was silently corrupting any odd (Thumb-marked) entry/callback address
+// into a misaligned PC instead of switching modes, matching exactly the
+// "invalid or unsupported instruction" fault seen with PC==LR==an odd
+// address right after a fresh initEntry().
+void setPcHonoringThumbBit(VxpEngine* engine, uint32_t value) {
+    uint32_t cpsr = engine->cpu.cpsr();
+    if (value & 1u) {
+        cpsr |= (1u << CPSR_BIT_T);
+    } else {
+        cpsr &= ~(1u << CPSR_BIT_T);
+    }
+    engine->cpu.setCpsr(cpsr);
+    engine->cpu.setReg(ARM_PC, value & ~1u);
+}
+
 } // namespace
 
 const char* vxp_strerror(VxpErr err) {
@@ -82,7 +107,11 @@ bool vxp_set_register(VxpEngine* engine, int regId, uint32_t value) {
         LOGW("vxp_set_register: unknown regId %d", regId);
         return false;
     }
-    engine->cpu.setReg(regId, value);
+    if (regId == VXP_REG_PC) {
+        setPcHonoringThumbBit(engine, value);
+    } else {
+        engine->cpu.setReg(regId, value);
+    }
     return true;
 }
 
@@ -91,7 +120,7 @@ VxpErr vxp_run(VxpEngine* engine, uint64_t startAddress, uint64_t endAddress,
     if (engine == nullptr) return VXP_ERR_HANDLE;
 
     engine->stopRequested = false;
-    engine->cpu.setReg(ARM_PC, static_cast<uint32_t>(startAddress));
+    setPcHonoringThumbBit(engine, static_cast<uint32_t>(startAddress));
 
     const auto start = std::chrono::steady_clock::now();
     size_t executed = 0;
