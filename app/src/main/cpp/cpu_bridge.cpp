@@ -63,117 +63,15 @@ bool vxp_set_register(uc_engine* uc, int regId, uint32_t value) {
     return true;
 }
 
-uc_err vxp_run(
-        uc_engine* uc,
-        uint64_t startAddress,
-        uint64_t endAddress,
-        uint64_t timeoutMicros,
-        size_t maxInstructions) {
+uc_err vxp_run(uc_engine* uc, uint64_t startAddress, uint64_t endAddress,
+               uint64_t timeoutMicros, size_t maxInstructions) {
+    if (uc == nullptr) return UC_ERR_HANDLE;
 
-    if (uc == nullptr) {
-        return UC_ERR_HANDLE;
-    }
-
-
-    LOGI(
-        "Starting VXP:"
-        " PC=0x%08llx"
-        " end=0x%08llx"
-        " timeout=%llu"
-        " count=%zu",
-        (unsigned long long)startAddress,
-        (unsigned long long)endAddress,
-        (unsigned long long)timeoutMicros,
-        maxInstructions
-    );
-
-
-    uc_err err =
-        uc_emu_start(
-            uc,
-            startAddress,
-            endAddress,
-            timeoutMicros,
-            maxInstructions
-        );
-
-
+    uc_err err = uc_emu_start(uc, startAddress, endAddress, timeoutMicros, maxInstructions);
     if (err != UC_ERR_OK) {
-
-        uint32_t pc  = 0;
-        uint32_t sp  = 0;
-        uint32_t lr  = 0;
-        uint32_t r9  = 0;
-
-        uc_reg_read(
-            uc,
-            UC_ARM_REG_PC,
-            &pc
-        );
-
-        uc_reg_read(
-            uc,
-            UC_ARM_REG_SP,
-            &sp
-        );
-
-        uc_reg_read(
-            uc,
-            UC_ARM_REG_LR,
-            &lr
-        );
-
-        uc_reg_read(
-            uc,
-            UC_ARM_REG_R9,
-            &r9
-        );
-
-
-        LOGE(
-            "========================================"
-        );
-
-        LOGE(
-            "        VXP EMULATOR STOPPED"
-        );
-
-        LOGE(
-            "========================================"
-        );
-
-        LOGE(
-            "Unicorn error : %d (%s)",
-            err,
-            uc_strerror(err)
-        );
-
-        LOGE(
-            "PC            : 0x%08x",
-            pc
-        );
-
-        LOGE(
-            "SP            : 0x%08x",
-            sp
-        );
-
-        LOGE(
-            "LR            : 0x%08x",
-            lr
-        );
-
-        LOGE(
-            "R9            : 0x%08x",
-            r9
-        );
-
-        LOGE(
-            "========================================"
-        );
+        LOGE("uc_emu_start(start=0x%llx, end=0x%llx) failed: %s",
+             (unsigned long long) startAddress, (unsigned long long) endAddress, uc_strerror(err));
     }
-
-
     return err;
 }
 

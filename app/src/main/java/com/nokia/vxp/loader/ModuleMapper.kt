@@ -1,6 +1,9 @@
 package com.nokia.vxp.loader
 
 import com.nokia.vxp.utils.Constants
+import com.nokia.vxp.utils.Logger
+
+private const val TAG = "ModuleMapper"
 
 /** One contiguous region to be mapped into the emulated address space. */
 data class MappedRegion(
@@ -10,41 +13,68 @@ data class MappedRegion(
     val readable: Boolean,
     val writable: Boolean,
     val executable: Boolean,
-    /** Initial content to copy in at map time, or null for zero-filled. */
+    /** Initial content to copy in at map time, or null for zero-filled (e.g. heap/stack, or a segment's .bss tail). */
     val initialContent: ByteArray? = null
 )
 
+/**
+ * Full memory layout for one loaded VXP module: the ELF's own PT_LOAD
+ * segments (mapped at their real ELF virtual addresses) plus a heap and
+ * stack region placed safely after them. memory.MemoryManager consumes
+ * this to actually set up Unicorn's mappings.
+ *
+ * ON ELF RELOCATIONS: this mapper loads every segment at its exact file
+ * vaddr rather than rebasing anywhere else, which makes the LOAD BIAS
+ * always zero - so R_ARM_RELATIVE-style relocations (which just add a
+ * bias to an existing value) are genuinely no-ops under this strategy.
+ * BUT relocation types that need an actual resolved SYMBOL VALUE
+ * (R_ARM_ABS32, R_ARM_GLOB_DAT, R_ARM_JUMP_SLOT) are NOT no-ops - if
+ * left unprocessed, the memory location they target simply stays
+ * whatever was in the file (often zero), and guest code that
+ * dereferences it as a pointer faults immediately. This was confirmed
+ * as a real bug via an actual user session's logcat: a file with
+ * symbols=0 (nothing found - a separate bug, since only .symtab was
+ * being checked, not .dynsym too) faulted writing to guest address 0x0
+ * only ~22 instructions after entry - the textbook signature of crt0's
+ * .bss-zeroing loop running with an unresolved (still-zero) pointer.
+ * applyRelocations() below now actually processes these.
+ */
 data class ModuleMemoryLayout(
     val entryPoint: Long,
     val isThumbEntry: Boolean,
-    val regions: List<MappedRegion>,
-    /** ARM/ADS static-base value. For these MRE images this is ER_ZI base. */
-    val staticBaseAddress: Long = 0L
+    val regions: List<MappedRegion>
 ) {
     val heapRegion: MappedRegion get() = regions.first { it.name == "heap" }
     val stackRegion: MappedRegion get() = regions.first { it.name == "stack" }
+
+    /** The ELF-derived loadable segments, in the order they appeared in the program header table. */
     val segmentRegions: List<MappedRegion> get() = regions.filter { it.name.startsWith("segment") }
 }
 
 object ModuleMapper {
-    private const val PAGE_SIZE = 0x1000L
-    private const val SHF_WRITE = 0x1L
-    private const val SHF_ALLOC = 0x2L
-    private const val SHT_PROGBITS = 1
-    private const val SHT_NOBITS = 8
 
-    private fun alignDown(value: Long): Long = value and (PAGE_SIZE - 1).inv()
-    private fun alignUp(value: Long): Long =
-        if (value <= 0) PAGE_SIZE else (value + PAGE_SIZE - 1) and (PAGE_SIZE - 1).inv()
+    // Small page-align helper kept local to this file rather than importing
+    // memory.Page, to avoid loader/ taking a dependency on memory/ (memory/
+    // already depends on loader/ - adding the reverse would create a cycle).
+    private const val PAGE_SIZE = 0x1000L
+    private fun alignUp(value: Long): Long {
+        if (value <= 0) return PAGE_SIZE
+        return (value + PAGE_SIZE - 1) and (PAGE_SIZE - 1).inv()
+    }
 
     fun map(vxpFile: VxpFile): ModuleMemoryLayout {
         val loadableSegments = vxpFile.programHeaders.filter { it.isLoadable }
 
         val segmentRegions = loadableSegments.mapIndexed { index, ph ->
-            val fileStart = ph.offset.toInt()
-            val fileEnd = (ph.offset + ph.fileSize).toInt()
-            val fileBytes = vxpFile.elfBytes.copyOfRange(fileStart, fileEnd)
-            val content = if (ph.memSize > ph.fileSize) fileBytes.copyOf(ph.memSize.toInt()) else fileBytes
+            val fileBytes = vxpFile.elfBytes.copyOfRange(ph.offset.toInt(), (ph.offset + ph.fileSize).toInt())
+            // memSize can exceed fileSize (the difference is .bss - zero-initialized
+            // data not stored in the file); pad with zeros up to memSize so the
+            // mapped region is the full size the ELF says it needs.
+            val content = if (ph.memSize > ph.fileSize) {
+                fileBytes.copyOf(ph.memSize.toInt()) // copyOf zero-pads the extra space
+            } else {
+                fileBytes
+            }
 
             MappedRegion(
                 name = "segment$index",
@@ -57,87 +87,107 @@ object ModuleMapper {
             )
         }
 
-        /*
-         * MediaTek/ADS VXP files commonly use a custom scatter layout:
-         * the ELF PT_LOAD may contain only ER_RO, while ER_RW/ER_ZI are
-         * described by section headers and live at low guest addresses.
-         * The uploaded Gamebox has exactly this layout:
-         *   ER_RW @ 0x00000000, size 0x10c
-         *   ER_ZI @ 0x0000010c, size 0x970
-         *
-         * If these sections are not mapped, the CRT/startup code reaches
-         * stores such as [r9] and immediately produces WRITE_UNMAPPED.
-         */
-        val writableAllocSections = vxpFile.sectionHeaders.filter { section ->
-            section.type == SHT_PROGBITS || section.type == SHT_NOBITS
-        }.filter { section ->
-            (section.flags and SHF_ALLOC) != 0L && (section.flags and SHF_WRITE) != 0L && section.size > 0
-        }
+        applyRelocations(segmentRegions, vxpFile.relocations, vxpFile.symbols)
 
-        val runtimeDataRegion = if (writableAllocSections.isNotEmpty()) {
-            val start = writableAllocSections.minOf { it.addr }
-            val end = writableAllocSections.maxOf { it.addr + it.size }
-            val base = alignDown(start)
-            val endAligned = alignUp(end)
-            val bytes = ByteArray((endAligned - base).toInt())
-
-            for (section in writableAllocSections) {
-                val dst = (section.addr - base).toInt()
-                if (section.type == SHT_PROGBITS) {
-                    val srcStart = section.offset.toInt()
-                    val srcEnd = (section.offset + section.size).toInt()
-                    if (srcStart >= 0 && srcEnd <= vxpFile.elfBytes.size && dst >= 0 && dst + (srcEnd - srcStart) <= bytes.size) {
-                        vxpFile.elfBytes.copyInto(bytes, dst, srcStart, srcEnd)
-                    }
-                }
-                // SHT_NOBITS (ER_ZI) intentionally remains zero-filled.
-            }
-
-            MappedRegion(
-                name = "runtimeData",
-                baseAddress = base,
-                size = endAligned - base,
-                readable = true,
-                writable = true,
-                executable = false,
-                initialContent = bytes
-            )
-        } else null
-
-        // ADS/MRE startup uses R9 as the static base. ER_ZI is the static
-        // base in the Gamebox image (0x10c). Fall back to runtimeData base.
-        val ziBase = vxpFile.sectionHeaders.firstOrNull { it.name == "ER_ZI" }?.addr
-        val staticBase = ziBase ?: runtimeDataRegion?.baseAddress ?: 0L
-
+        // Place heap/stack safely after the highest ELF segment, rather
+        // than at fixed addresses that could collide with wherever the
+        // real ELF's vaddrs actually land.
         val highestSegmentEnd = segmentRegions.maxOfOrNull { it.baseAddress + it.size } ?: 0L
-        val highestRuntimeEnd = runtimeDataRegion?.let { it.baseAddress + it.size } ?: 0L
-        val highestLoadedEnd = maxOf(highestSegmentEnd, highestRuntimeEnd)
-        val heapBase = alignUp(highestLoadedEnd + PAGE_SIZE)
+        val heapBase = alignUp(highestSegmentEnd + PAGE_SIZE) // one-page gap as a guard against off-by-one overruns
         val heapSize = alignUp(Constants.DEFAULT_HEAP_SIZE)
         val stackBase = alignUp(heapBase + heapSize + PAGE_SIZE)
         val stackSize = alignUp(Constants.DEFAULT_STACK_SIZE)
 
         val heapRegion = MappedRegion(
-            name = "heap", baseAddress = heapBase, size = heapSize,
-            readable = true, writable = true, executable = false
+            name = "heap",
+            baseAddress = heapBase,
+            size = heapSize,
+            readable = true,
+            writable = true,
+            executable = false,
+            initialContent = null
         )
         val stackRegion = MappedRegion(
-            name = "stack", baseAddress = stackBase, size = stackSize,
-            readable = true, writable = true, executable = false
+            name = "stack",
+            baseAddress = stackBase,
+            size = stackSize,
+            readable = true,
+            writable = true,
+            executable = false,
+            initialContent = null
         )
-
-        val regions = buildList {
-            if (runtimeDataRegion != null) add(runtimeDataRegion)
-            addAll(segmentRegions)
-            add(heapRegion)
-            add(stackRegion)
-        }
 
         return ModuleMemoryLayout(
             entryPoint = vxpFile.header.realEntryAddress,
             isThumbEntry = vxpFile.header.isThumbEntry,
-            regions = regions,
-            staticBaseAddress = staticBase
+            regions = segmentRegions + heapRegion + stackRegion
         )
+    }
+
+    /**
+     * Applies relocations directly into each segment's initialContent
+     * byte array, in place, BEFORE mapping - so the correct resolved
+     * values are already there on the very first uc_mem_write, rather
+     * than needing a separate patch pass after mapping.
+     *
+     * Only the relocation types with well-defined, symbol-based
+     * semantics are handled: R_ARM_ABS32/GLOB_DAT/JUMP_SLOT (target =
+     * resolved symbol value + addend) and R_ARM_RELATIVE (target =
+     * addend + load bias, and load bias is always 0 here - see this
+     * file's top doc comment). Anything else is logged and skipped
+     * rather than guessed at.
+     */
+    private fun applyRelocations(segments: List<MappedRegion>, relocations: List<ElfRelocation>, symbols: List<ElfSymbol>) {
+        if (relocations.isEmpty()) return
+
+        var applied = 0
+        var skipped = 0
+
+        for (reloc in relocations) {
+            val value: Long? = when (reloc.type) {
+                ElfRelocation.R_ARM_ABS32, ElfRelocation.R_ARM_GLOB_DAT, ElfRelocation.R_ARM_JUMP_SLOT -> {
+                    val symbolValue = symbols.getOrNull(reloc.symbolIndex)?.value
+                    if (symbolValue == null) {
+                        Logger.w(TAG, "Relocation at 0x${reloc.offset.toString(16)} references symbol index ${reloc.symbolIndex}, which isn't in our (possibly incomplete) symbol list - skipping")
+                        null
+                    } else {
+                        symbolValue + reloc.addend
+                    }
+                }
+                ElfRelocation.R_ARM_RELATIVE -> reloc.addend // + load bias (always 0 under this mapper's strategy)
+                else -> {
+                    Logger.w(TAG, "Unhandled relocation type ${reloc.type} at 0x${reloc.offset.toString(16)} - skipping")
+                    null
+                }
+            }
+
+            if (value == null) {
+                skipped++
+                continue
+            }
+
+            val region = segments.firstOrNull { reloc.offset >= it.baseAddress && reloc.offset < it.baseAddress + it.size }
+            val content = region?.initialContent
+            if (region == null || content == null) {
+                Logger.w(TAG, "Relocation target 0x${reloc.offset.toString(16)} isn't inside any mapped segment - skipping")
+                skipped++
+                continue
+            }
+
+            val localOffset = (reloc.offset - region.baseAddress).toInt()
+            if (localOffset + 4 > content.size) {
+                Logger.w(TAG, "Relocation target 0x${reloc.offset.toString(16)} is too close to the end of segment '${region.name}' - skipping")
+                skipped++
+                continue
+            }
+
+            content[localOffset] = (value and 0xFF).toByte()
+            content[localOffset + 1] = ((value ushr 8) and 0xFF).toByte()
+            content[localOffset + 2] = ((value ushr 16) and 0xFF).toByte()
+            content[localOffset + 3] = ((value ushr 24) and 0xFF).toByte()
+            applied++
+        }
+
+        Logger.i(TAG, "Relocations: applied $applied, skipped $skipped (of ${relocations.size} total)")
     }
 }

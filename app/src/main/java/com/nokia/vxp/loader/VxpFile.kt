@@ -15,6 +15,7 @@ data class VxpFile(
     val programHeaders: List<ElfProgramHeader>,
     val sectionHeaders: List<ElfSectionHeader>,
     val symbols: List<ElfSymbol>,
+    val relocations: List<ElfRelocation>,
     val elfBytes: ByteArray,
     val resourceSectionData: ByteArray?,
     val tags: List<VxpTag>,
@@ -28,6 +29,7 @@ data class VxpFile(
             programHeaders == other.programHeaders &&
             sectionHeaders == other.sectionHeaders &&
             symbols == other.symbols &&
+            relocations == other.relocations &&
             elfBytes.contentEquals(other.elfBytes) &&
             (resourceSectionData?.contentEquals(other.resourceSectionData ?: ByteArray(0)) ?: (other.resourceSectionData == null)) &&
             tags == other.tags &&
@@ -40,6 +42,7 @@ data class VxpFile(
         result = 31 * result + programHeaders.hashCode()
         result = 31 * result + sectionHeaders.hashCode()
         result = 31 * result + symbols.hashCode()
+        result = 31 * result + relocations.hashCode()
         result = 31 * result + elfBytes.contentHashCode()
         result = 31 * result + (resourceSectionData?.contentHashCode() ?: 0)
         result = 31 * result + tags.hashCode()

@@ -41,9 +41,7 @@ class CpuState(private val memoryManager: MemoryManager) {
     fun snapshot(): Map<Registers, Long> = Registers.values().associateWith { getRegister(it) }
 
     /** Initializes SP/PC/LR for a freshly mapped module before the first run/step call. */
-    fun initEntry(entryPoint: Long, initialSp: Long, initialR9: Long = 0L) {
-        // MRE/ADS uses R9 as the static-data base (ER_ZI base).
-        setRegister(Registers.R9, initialR9)
+    fun initEntry(entryPoint: Long, initialSp: Long) {
         setRegister(Registers.PC, entryPoint)
         setRegister(Registers.SP, initialSp)
         // LR also set to the entry point: some MRE-era stubs do a bare
