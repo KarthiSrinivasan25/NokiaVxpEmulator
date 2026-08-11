@@ -17,13 +17,16 @@ enum VxpProt : uint32_t {
     VXP_PROT_ALL = VXP_PROT_READ | VXP_PROT_WRITE | VXP_PROT_EXEC,
 };
 
+
 // Sparse, page-granular guest address space. Real VXP/MRE modules only
 // ever map a handful of regions (code segment, data segment, heap, stack),
 // so a hash map keyed by page index is simple and plenty fast - no need
 // for Unicorn/QEMU's TLB machinery for an interpret-only CPU like this one.
 class VxpMemory : public ArmMemoryBus {
 public:
-    static constexpr uint64_t PAGE_SIZE = 0x1000;
+    // Do not call this PAGE_SIZE: Android's sys/user.h defines PAGE_SIZE
+    // as a preprocessor macro.
+    static constexpr uint64_t VXP_PAGE_SIZE = 0x1000;
 
     // Maps [base, base+size) with the given permissions, aligned exactly
     // like the old vxp_map_region() did (align base down, extend size to
@@ -41,8 +44,8 @@ public:
     bool apiWrite(uint64_t address, const uint8_t* data, size_t len);
 
     static uint64_t alignSizeToPage(uint64_t size) {
-        if (size == 0) return PAGE_SIZE;
-        return (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
+        if (size == 0) return VXP_PAGE_SIZE;
+        return (size + (VXP_PAGE_SIZE - 1)) & ~(VXP_PAGE_SIZE - 1);
     }
 
     // ArmMemoryBus - guest CPU-issued accesses, which DO respect permissions.
@@ -54,7 +57,8 @@ private:
     struct Page {
         uint32_t perms = 0;
         std::unique_ptr<uint8_t[]> data;
-        Page() : data(new uint8_t[PAGE_SIZE]()) {}
+
+        Page() : data(new uint8_t[VXP_PAGE_SIZE]()) {}
     };
 
     Page* findPage(uint64_t address) const;
@@ -65,6 +69,6 @@ private:
     mutable std::unordered_map<uint64_t, std::unique_ptr<Page>> pages_;
 
     bool accessChecked(uint32_t address, uint8_t* out, const uint8_t* in, size_t len,
-                        uint32_t requiredPerm, ArmFault unmappedFault, ArmFault protFault,
-                        ArmFault* fault);
+                       uint32_t requiredPerm, ArmFault unmappedFault, ArmFault protFault,
+                       ArmFault* fault);
 };
