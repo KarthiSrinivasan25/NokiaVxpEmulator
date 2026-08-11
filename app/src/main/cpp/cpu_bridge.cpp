@@ -1,111 +1,178 @@
 #include "cpu_bridge.h"
 
 #include <android/log.h>
+#include <chrono>
 
 #define LOG_TAG "VxpNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-// Translates our stable VxpRegisterId to Unicorn's real UC_ARM_REG_*
-// symbol. Resolved at compile time against the actual header, so we
-// never have to hardcode (and risk getting wrong) Unicorn's internal
-// numeric values.
-static int toUnicornRegId(int regId) {
-    switch (regId) {
-        case VXP_REG_R0:  return UC_ARM_REG_R0;
-        case VXP_REG_R1:  return UC_ARM_REG_R1;
-        case VXP_REG_R2:  return UC_ARM_REG_R2;
-        case VXP_REG_R3:  return UC_ARM_REG_R3;
-        case VXP_REG_R4:  return UC_ARM_REG_R4;
-        case VXP_REG_R5:  return UC_ARM_REG_R5;
-        case VXP_REG_R6:  return UC_ARM_REG_R6;
-        case VXP_REG_R7:  return UC_ARM_REG_R7;
-        case VXP_REG_R8:  return UC_ARM_REG_R8;
-        case VXP_REG_R9:  return UC_ARM_REG_R9;
-        case VXP_REG_R10: return UC_ARM_REG_R10;
-        case VXP_REG_R11: return UC_ARM_REG_R11;
-        case VXP_REG_R12: return UC_ARM_REG_R12;
-        case VXP_REG_SP:  return UC_ARM_REG_SP;
-        case VXP_REG_LR:  return UC_ARM_REG_LR;
-        case VXP_REG_PC:  return UC_ARM_REG_PC;
-        case VXP_REG_CPSR: return UC_ARM_REG_CPSR;
-        default:
-            LOGW("toUnicornRegId: unknown VxpRegisterId %d", regId);
-            return -1;
+namespace {
+
+// An address guaranteed to never be legitimately reached by guest code -
+// used as the "no end-address limit" sentinel, matching Executor.kt's own
+// NO_END_ADDRESS_LIMIT constant and reasoning (0 is a real, legitimate
+// guest address for some real VXP files, so it can't double as "no limit").
+constexpr uint64_t NO_END_ADDRESS_LIMIT = 0xFFFFFFFFULL;
+
+VxpErr faultToErr(ArmFault fault) {
+    switch (fault) {
+        case ArmFault::None:           return VXP_ERR_OK;
+        case ArmFault::ReadUnmapped:   return VXP_ERR_READ_UNMAPPED;
+        case ArmFault::WriteUnmapped:  return VXP_ERR_WRITE_UNMAPPED;
+        case ArmFault::FetchUnmapped:  return VXP_ERR_FETCH_UNMAPPED;
+        case ArmFault::ReadProt:       return VXP_ERR_READ_PROT;
+        case ArmFault::WriteProt:      return VXP_ERR_WRITE_PROT;
+        case ArmFault::FetchProt:      return VXP_ERR_FETCH_PROT;
+        case ArmFault::InvalidInsn:    return VXP_ERR_INSN_INVALID;
+    }
+    return VXP_ERR_INSN_INVALID;
+}
+
+} // namespace
+
+const char* vxp_strerror(VxpErr err) {
+    switch (err) {
+        case VXP_ERR_OK:              return "OK";
+        case VXP_ERR_HANDLE:          return "invalid engine handle";
+        case VXP_ERR_READ_UNMAPPED:   return "invalid memory read (unmapped)";
+        case VXP_ERR_WRITE_UNMAPPED:  return "invalid memory write (unmapped)";
+        case VXP_ERR_FETCH_UNMAPPED:  return "invalid instruction fetch (unmapped)";
+        case VXP_ERR_READ_PROT:       return "invalid memory read (not readable)";
+        case VXP_ERR_WRITE_PROT:      return "invalid memory write (not writable)";
+        case VXP_ERR_FETCH_PROT:      return "invalid instruction fetch (not executable)";
+        case VXP_ERR_INSN_INVALID:    return "invalid or unsupported instruction";
+        case VXP_ERR_MAP:             return "invalid memory mapping request";
+        default:                      return "unknown error";
     }
 }
 
-uint32_t vxp_get_register(uc_engine* uc, int regId) {
-    if (uc == nullptr) return 0;
-    int ucReg = toUnicornRegId(regId);
-    if (ucReg < 0) return 0;
+VxpEngine* vxp_create_arm_engine() {
+    auto* engine = new VxpEngine();
+    LOGI("Custom ARM interpreter engine created (ARMv4T-class, no external CPU library)");
+    return engine;
+}
 
-    uint32_t value = 0;
-    uc_err err = uc_reg_read(uc, ucReg, &value);
-    if (err != UC_ERR_OK) {
-        LOGE("uc_reg_read(regId=%d) failed: %s", regId, uc_strerror(err));
+void vxp_destroy_engine(VxpEngine* engine) {
+    if (engine == nullptr) return;
+    delete engine;
+    LOGI("Engine destroyed");
+}
+
+uint32_t vxp_get_register(VxpEngine* engine, int regId) {
+    if (engine == nullptr) return 0;
+    if (regId < 0 || regId > VXP_REG_CPSR) {
+        LOGW("vxp_get_register: unknown regId %d", regId);
         return 0;
     }
-    return value;
+    // Note: unlike the guest-visible getReg() used during instruction
+    // execution, register inspection from Kotlin (CpuState.getRegister)
+    // wants the raw architectural value - PC without the pipeline +8/+4
+    // read-bias - since that's what a debugger/register-viewer should
+    // display. rawPc() gives that for PC; every other register has no bias.
+    if (regId == VXP_REG_PC) return engine->cpu.rawPc();
+    if (regId == VXP_REG_CPSR) return engine->cpu.cpsr();
+    return engine->cpu.getReg(regId);
 }
 
-bool vxp_set_register(uc_engine* uc, int regId, uint32_t value) {
-    if (uc == nullptr) return false;
-    int ucReg = toUnicornRegId(regId);
-    if (ucReg < 0) return false;
-
-    uc_err err = uc_reg_write(uc, ucReg, &value);
-    if (err != UC_ERR_OK) {
-        LOGE("uc_reg_write(regId=%d, value=0x%x) failed: %s", regId, value, uc_strerror(err));
+bool vxp_set_register(VxpEngine* engine, int regId, uint32_t value) {
+    if (engine == nullptr) return false;
+    if (regId < 0 || regId > VXP_REG_CPSR) {
+        LOGW("vxp_set_register: unknown regId %d", regId);
         return false;
     }
+    engine->cpu.setReg(regId, value);
     return true;
 }
 
-uc_err vxp_run(uc_engine* uc, uint64_t startAddress, uint64_t endAddress,
+VxpErr vxp_run(VxpEngine* engine, uint64_t startAddress, uint64_t endAddress,
                uint64_t timeoutMicros, size_t maxInstructions) {
-    if (uc == nullptr) return UC_ERR_HANDLE;
+    if (engine == nullptr) return VXP_ERR_HANDLE;
 
-    uc_err err = uc_emu_start(uc, startAddress, endAddress, timeoutMicros, maxInstructions);
-    if (err != UC_ERR_OK) {
-        LOGE("uc_emu_start(start=0x%llx, end=0x%llx) failed: %s",
-             (unsigned long long) startAddress, (unsigned long long) endAddress, uc_strerror(err));
+    engine->stopRequested = false;
+    engine->cpu.setReg(ARM_PC, static_cast<uint32_t>(startAddress));
+
+    const auto start = std::chrono::steady_clock::now();
+    size_t executed = 0;
+
+    while (true) {
+        if (engine->stopRequested) {
+            return VXP_ERR_OK;
+        }
+        if (endAddress != NO_END_ADDRESS_LIMIT && engine->cpu.rawPc() == static_cast<uint32_t>(endAddress)) {
+            return VXP_ERR_OK;
+        }
+        if (maxInstructions > 0 && executed >= maxInstructions) {
+            return VXP_ERR_OK;
+        }
+        if (timeoutMicros > 0) {
+            auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (static_cast<uint64_t>(elapsedUs) >= timeoutMicros) {
+                return VXP_ERR_OK;
+            }
+        }
+
+        uint32_t faultPc = engine->cpu.rawPc();
+        ArmFault fault = engine->cpu.stepOne();
+
+        if (fault == ArmFault::FetchUnmapped && engine->fetchHook != nullptr) {
+            uint32_t r0 = engine->cpu.getReg(ARM_R0), r1 = engine->cpu.getReg(ARM_R1);
+            uint32_t r2 = engine->cpu.getReg(ARM_R2), r3 = engine->cpu.getReg(ARM_R3);
+            bool handled = engine->fetchHook(engine, faultPc, r0, r1, r2, r3, engine->fetchHookUserData);
+            if (handled) {
+                executed++;
+                continue;
+            }
+        }
+
+        if (fault != ArmFault::None) {
+            VxpErr err = faultToErr(fault);
+            if (engine->invalidHook != nullptr) {
+                engine->invalidHook(engine, err, faultPc, 4, engine->invalidHookUserData);
+            }
+            LOGE("vxp_run: stopped with %s at pc=0x%x", vxp_strerror(err), faultPc);
+            return err;
+        }
+
+        executed++;
     }
-    return err;
 }
 
-uc_err vxp_step(uc_engine* uc) {
-    if (uc == nullptr) return UC_ERR_HANDLE;
+VxpErr vxp_step(VxpEngine* engine) {
+    if (engine == nullptr) return VXP_ERR_HANDLE;
 
-    // uc_emu_start's `begin` parameter sets PC before running, so we must
-    // read the real current PC first - passing a sentinel here would jump
-    // execution to garbage instead of single-stepping from where it is.
-    uint32_t currentPc = 0;
-    uc_err err = uc_reg_read(uc, UC_ARM_REG_PC, &currentPc);
-    if (err != UC_ERR_OK) {
-        LOGE("vxp_step: failed to read current PC: %s", uc_strerror(err));
-        return err;
+    // Loop so a handled fetch-unmapped trap (an MRE syscall trampoline)
+    // doesn't itself count as "the one instruction" - matches the old
+    // Unicorn-backed step's observable behavior.
+    for (int guard = 0; guard < 64; guard++) {
+        uint32_t faultPc = engine->cpu.rawPc();
+        ArmFault fault = engine->cpu.stepOne();
+
+        if (fault == ArmFault::FetchUnmapped && engine->fetchHook != nullptr) {
+            uint32_t r0 = engine->cpu.getReg(ARM_R0), r1 = engine->cpu.getReg(ARM_R1);
+            uint32_t r2 = engine->cpu.getReg(ARM_R2), r3 = engine->cpu.getReg(ARM_R3);
+            bool handled = engine->fetchHook(engine, faultPc, r0, r1, r2, r3, engine->fetchHookUserData);
+            if (handled) continue;
+        }
+
+        if (fault != ArmFault::None) {
+            VxpErr err = faultToErr(fault);
+            if (engine->invalidHook != nullptr) {
+                engine->invalidHook(engine, err, faultPc, 4, engine->invalidHookUserData);
+            }
+            LOGE("vxp_step: failed with %s at pc=0x%x", vxp_strerror(err), faultPc);
+            return err;
+        }
+        return VXP_ERR_OK;
     }
 
-    // `until` must NOT be a literal 0 here - Unicorn treats it as a real
-    // target address, and 0 is a legitimate guest address for some real
-    // VXP files (confirmed: gtrxAC/peanut.vxp's PT_LOAD segment starts
-    // exactly at vaddr 0x0). count=1 already bounds this to a single
-    // instruction regardless, so use a guaranteed-unreachable "until"
-    // instead - matches cpu/Executor.kt's NO_END_ADDRESS_LIMIT reasoning.
-    constexpr uint64_t NO_END_ADDRESS_LIMIT = 0xFFFFFFFFULL;
-    err = uc_emu_start(uc, currentPc, /*until=*/ NO_END_ADDRESS_LIMIT, /*timeout=*/ 0, /*count=*/ 1);
-    if (err != UC_ERR_OK) {
-        LOGE("vxp_step failed: %s", uc_strerror(err));
-    }
-    return err;
+    LOGE("vxp_step: exceeded trap-resolution guard (64 unmapped-fetch traps in a row)");
+    return VXP_ERR_FETCH_UNMAPPED;
 }
 
-void vxp_stop(uc_engine* uc) {
-    if (uc == nullptr) return;
-    uc_err err = uc_emu_stop(uc);
-    if (err != UC_ERR_OK) {
-        LOGE("uc_emu_stop failed: %s", uc_strerror(err));
-    }
+void vxp_stop(VxpEngine* engine) {
+    if (engine == nullptr) return;
+    engine->stopRequested = true;
 }

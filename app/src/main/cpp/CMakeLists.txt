@@ -5,58 +5,24 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ---------------------------------------------------------------------------
-# Unicorn Engine (external/unicorn at repo root), built from source as a
-# static lib. Restricted to the ARM target since VXP/MRE binaries run on
-# ARM7/ARM9-class cores - this keeps build time and binary size down
-# compared to building all of Unicorn's supported architectures.
+# CPU emulation backend: a custom ARMv4T (ARM7TDMI-class) fetch-decode-
+# execute interpreter (arm_cpu.cpp/.h), backed by our own sparse paged
+# guest address space (vxp_memory.cpp/.h) and glued together for JNI via
+# cpu_bridge.cpp/.h. No external CPU emulation library (Unicorn/QEMU) is
+# used or required - this always builds, on every platform, with nothing
+# beyond the NDK's own toolchain.
 # ---------------------------------------------------------------------------
-set(UNICORN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../external/unicorn)
-
-set(UNICORN_ARCH "arm" CACHE STRING "" FORCE)
-set(UNICORN_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(UNICORN_INSTALL OFF CACHE BOOL "" FORCE)
-set(UNICORN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(UNICORN_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
-
-if(EXISTS ${UNICORN_DIR}/CMakeLists.txt)
-    add_subdirectory(${UNICORN_DIR} ${CMAKE_CURRENT_BINARY_DIR}/unicorn-build)
-    set(VXP_HAVE_UNICORN TRUE)
-else()
-    message(WARNING
-        "external/unicorn not found at ${UNICORN_DIR}. Clone Unicorn 2.x "
-        "specifically (NOT the default branch, which may resolve to an "
-        "older tag on some mirrors/zips) - the 1.x QEMU-fork build needs "
-        "a bash configure script to generate config-host.h, which does "
-        "NOT run automatically via CMake on Windows and will fail with "
-        "'config-host.h file not found'. Unicorn 2.x's build is pure "
-        "CMake and doesn't have this problem:\n"
-        "  git clone --depth 1 --branch 2.1.4 "
-        "https://github.com/unicorn-engine/unicorn.git external/unicorn\n"
-        "memory.cpp/unicorn_bridge.cpp/jni_bridge.cpp depend on "
-        "<unicorn/unicorn.h> and will be EXCLUDED from this build until "
-        "then; only the native-lib.cpp scaffold will be compiled.")
-    set(VXP_HAVE_UNICORN FALSE)
-endif()
-
-# ---------------------------------------------------------------------------
-# Our native sources. The Unicorn-dependent files are only compiled once
-# external/unicorn is actually present (see above), so a fresh checkout
-# without the submodule still configures and builds successfully.
-# ---------------------------------------------------------------------------
-set(VXP_SOURCES native-lib.cpp)
-
-if(VXP_HAVE_UNICORN)
-    list(APPEND VXP_SOURCES
-        jni_bridge.cpp
-        unicorn_bridge.cpp
-        memory.cpp
+set(VXP_SOURCES
+        native-lib.cpp
+        arm_cpu.cpp
+        vxp_memory.cpp
         cpu_bridge.cpp
+        jni_bridge.cpp
         jni_cpu_bridge.cpp
         vm_dispatch_bridge.cpp
         jni_mre_bridge.cpp
         fault_diagnostics.cpp
-    )
-endif()
+)
 
 add_library(
         vxpnative
@@ -64,24 +30,7 @@ add_library(
         ${VXP_SOURCES}
 )
 
-if(VXP_HAVE_UNICORN)
-    target_include_directories(
-            vxpnative
-            PRIVATE
-            ${UNICORN_DIR}/include
-    )
-    # Lets native-lib.cpp report accurately (via #ifdef) whether this
-    # build actually has the Unicorn-backed cpu/memory/mre bridges
-    # compiled in, instead of a hardcoded string that goes stale the
-    # moment the real build state changes.
-    target_compile_definitions(vxpnative PRIVATE VXP_HAVE_UNICORN_BUILD)
-endif()
-
 find_library(log-lib log)
 find_library(android-lib android)
 
-if(VXP_HAVE_UNICORN AND TARGET unicorn)
-    target_link_libraries(vxpnative unicorn ${log-lib} ${android-lib})
-else()
-    target_link_libraries(vxpnative ${log-lib} ${android-lib})
-endif()
+target_link_libraries(vxpnative ${log-lib} ${android-lib})

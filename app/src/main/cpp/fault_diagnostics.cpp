@@ -1,5 +1,4 @@
 #include "fault_diagnostics.h"
-#include "cpu_bridge.h"
 
 #include <android/log.h>
 
@@ -9,56 +8,42 @@
 
 namespace {
 
-const char* memTypeName(uc_mem_type type) {
-    switch (type) {
-        case UC_MEM_READ_UNMAPPED: return "READ_UNMAPPED";
-        case UC_MEM_WRITE_UNMAPPED: return "WRITE_UNMAPPED";
-        case UC_MEM_FETCH_UNMAPPED: return "FETCH_UNMAPPED";
-        case UC_MEM_READ_PROT: return "READ_PROT (mapped but not readable)";
-        case UC_MEM_WRITE_PROT: return "WRITE_PROT (mapped but not writable)";
-        case UC_MEM_FETCH_PROT: return "FETCH_PROT (mapped but not executable)";
-        default: return "UNKNOWN";
-    }
-}
+// Sentinel "installed" handle. VxpEngine (unlike Unicorn) only has a
+// single invalidHook slot rather than a chain of installable hooks, so
+// there's nothing richer to hand back here - this just needs to be
+// non-zero so callers can tell "installed" from "failed to install".
+constexpr uint64_t FAULT_DIAGNOSTICS_HOOK_HANDLE = 1;
 
-bool onMemInvalid(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* /*userData*/) {
-    uint32_t pc = vxp_get_register(uc, VXP_REG_PC);
-    uint32_t sp = vxp_get_register(uc, VXP_REG_SP);
-    uint32_t lr = vxp_get_register(uc, VXP_REG_LR);
+void onInvalidAccess(VxpEngine* engine, VxpErr err, uint64_t address, int size, void* /*userData*/) {
+    uint32_t pc = vxp_get_register(engine, VXP_REG_PC);
+    uint32_t sp = vxp_get_register(engine, VXP_REG_SP);
+    uint32_t lr = vxp_get_register(engine, VXP_REG_LR);
 
     LOGE(
-        "MEMORY FAULT: %s at guest address=0x%llx size=%d value=0x%llx | PC=0x%08x SP=0x%08x LR=0x%08x",
-        memTypeName(type), (unsigned long long) address, size, (unsigned long long) value, pc, sp, lr
+        "MEMORY FAULT: %s at guest address=0x%llx size=%d | PC=0x%08x SP=0x%08x LR=0x%08x",
+        vxp_strerror(err), (unsigned long long) address, size, pc, sp, lr
     );
 
-    // Never "handle" it - this hook is purely diagnostic. Returning
-    // false lets Unicorn raise the real fault exactly as it would have
-    // without this hook installed; RunResult.Error's message is
-    // unchanged, but this log line now precedes it with the address/PC
-    // that message alone can't convey.
-    return false;
+    // Never "handles" anything - this hook is purely diagnostic. The
+    // real fault always still propagates to Executor.kt exactly as it
+    // would without this hook installed; this log line just precedes it
+    // with the address/PC that the bare error message alone can't convey.
 }
 
 } // namespace
 
-uint64_t vxp_install_fault_diagnostics_hook(uc_engine* uc) {
-    if (uc == nullptr) return 0;
+uint64_t vxp_install_fault_diagnostics_hook(VxpEngine* engine) {
+    if (engine == nullptr) return 0;
 
-    uc_hook hook;
-    uc_err err = uc_hook_add(
-        uc, &hook, UC_HOOK_MEM_INVALID,
-        reinterpret_cast<void*>(&onMemInvalid), nullptr, 1, 0
-    );
-    if (err != UC_ERR_OK) {
-        LOGE("uc_hook_add for fault diagnostics failed: %s", uc_strerror(err));
-        return 0;
-    }
+    engine->invalidHook = &onInvalidAccess;
+    engine->invalidHookUserData = nullptr;
 
     LOGI("Fault diagnostics hook installed");
-    return static_cast<uint64_t>(hook);
+    return FAULT_DIAGNOSTICS_HOOK_HANDLE;
 }
 
-void vxp_remove_fault_diagnostics_hook(uc_engine* uc, uint64_t hookHandle) {
-    if (uc == nullptr || hookHandle == 0) return;
-    uc_hook_del(uc, static_cast<uc_hook>(hookHandle));
+void vxp_remove_fault_diagnostics_hook(VxpEngine* engine, uint64_t hookHandle) {
+    if (engine == nullptr || hookHandle == 0) return;
+    engine->invalidHook = nullptr;
+    engine->invalidHookUserData = nullptr;
 }

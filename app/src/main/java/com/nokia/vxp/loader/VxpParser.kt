@@ -16,11 +16,9 @@ sealed class ParseResult {
 /**
  * Parses already-unwrapped ELF bytes (VxpLoader handles zlib/ZIP
  * unwrapping before calling this) into a VxpFile: ELF header, program
- * headers, section headers, symbols (from BOTH .symtab and .dynsym -
- * some real VXP files strip the former but keep the latter, since real
- * dynamic linking needs it), relocations (from .rel.dyn/.rela.dyn - see
- * loader.ElfRelocation for why this matters), the .vm_res section if
- * present, and any MediaTek metadata tags appended after the ELF data.
+ * headers, section headers, the symbol table (if present - used by
+ * mre.VmSymbolBinder), the .vm_res section if present, and any
+ * MediaTek metadata tags appended after the ELF data.
  */
 object VxpParser {
 
@@ -69,13 +67,6 @@ object VxpParser {
             emptyList()
         }
 
-        val relocations = try {
-            readRelocations(buffer, bytes, sectionHeaders, programHeaders)
-        } catch (e: Exception) {
-            Logger.w(TAG, "Exception while reading relocations (continuing without them): ${e.message}")
-            emptyList()
-        }
-
         val resourceSectionData = sectionHeaders
             .firstOrNull { it.name == Constants.VM_RES_SECTION_NAME }
             ?.let { section ->
@@ -94,8 +85,7 @@ object VxpParser {
             TAG,
             "Parsed VXP OK: entry=0x${header.entryPoint.toString(16)} " +
                 "segments=${programHeaders.count { it.isLoadable }} " +
-                "vm_res=${resourceSectionData?.size ?: 0}B tags=${tags.size} " +
-                "symbols=${symbols.size} relocations=${relocations.size}"
+                "vm_res=${resourceSectionData?.size ?: 0}B tags=${tags.size} symbols=${symbols.size}"
         )
 
         return ParseResult.Success(
@@ -105,7 +95,6 @@ object VxpParser {
                 programHeaders = programHeaders,
                 sectionHeaders = sectionHeaders,
                 symbols = symbols,
-                relocations = relocations,
                 elfBytes = bytes,
                 resourceSectionData = resourceSectionData,
                 tags = tags,
@@ -232,30 +221,18 @@ object VxpParser {
     }
 
     /**
-     * Parses symbols from BOTH .symtab and .dynsym (if present) into
-     * ElfSymbol entries, resolving each name via the matching string
-     * table (found through sh_link, per the ELF spec - not a fixed
-     * section name/index).
-     *
-     * IMPORTANT: checking only .symtab was a real bug - a real user
-     * session's logcat showed a file with symbols=0 (nothing in
-     * .symtab) that then faulted writing to guest address 0x0 almost
-     * immediately after entry (classic "dereferencing an unresolved
-     * pointer" signature). .dynsym (the *dynamic* symbol table) is
-     * commonly kept even when .symtab is stripped, since real dynamic
-     * linking needs it - checking only .symtab meant missing symbols
-     * (and therefore missing mre.VmSymbolBinder jump-table patches, and
-     * missing relocation symbol resolution) on exactly the files most
-     * likely to need them. Fully stripped files (neither table present)
-     * still just yield an empty list - not an error.
+     * Parses .symtab (if present) into ElfSymbol entries, resolving each
+     * name via .strtab (found through .symtab's sh_link field, per the
+     * ELF spec - not a fixed section name/index). Real, non-stripped VXP
+     * files DO carry these (confirmed against gtrxAC/peanut.vxp) - the
+     * real MRE OS loader apparently needs the symbol names itself to
+     * know which "_vm_*" jump-table slot (in .bss) to patch with which
+     * real API address. See mre.VmSymbolBinder, which does the
+     * equivalent patching using our own trap addresses. Stripped files
+     * (no .symtab) simply yield an empty list here - not an error.
      */
     private fun readSymbols(buffer: ByteBuffer, bytes: ByteArray, sectionHeaders: List<ElfSectionHeader>): List<ElfSymbol> {
-        return readSymbolTable(buffer, bytes, sectionHeaders, ".symtab") +
-            readSymbolTable(buffer, bytes, sectionHeaders, ".dynsym")
-    }
-
-    private fun readSymbolTable(buffer: ByteBuffer, bytes: ByteArray, sectionHeaders: List<ElfSectionHeader>, tableName: String): List<ElfSymbol> {
-        val symtab = sectionHeaders.firstOrNull { it.name == tableName } ?: return emptyList()
+        val symtab = sectionHeaders.firstOrNull { it.name == ".symtab" } ?: return emptyList()
         val strtabIndex = symtab.link
         val strtab = sectionHeaders.getOrNull(strtabIndex) ?: return emptyList()
 
@@ -283,96 +260,6 @@ object VxpParser {
     }
 
     private const val ELF_SYM_SIZE = 16 // Elf32_Sym: name(4) value(4) size(4) info(1) other(1) shndx(2)
-
-    // Standard ELF sh_type values (not VXP-specific).
-    private const val SHT_REL = 9
-    private const val SHT_RELA = 4
-
-    /**
-     * Parses .rel.dyn/.rel.plt-style sections (SHT_REL, implicit addend
-     * read from the existing bytes at the target vaddr) and
-     * .rela.dyn/.rela.plt-style sections (SHT_RELA, explicit addend
-     * field) into normalized ElfRelocation entries. See
-     * loader.ElfRelocation's doc comment for why this exists - some real
-     * VXP files need actual relocation processing, not just the "load
-     * bias is always zero so it's a no-op" case that happened to hold
-     * for the one sample this was first validated against.
-     */
-    private fun readRelocations(
-        buffer: ByteBuffer,
-        bytes: ByteArray,
-        sectionHeaders: List<ElfSectionHeader>,
-        programHeaders: List<ElfProgramHeader>
-    ): List<ElfRelocation> {
-        val result = mutableListOf<ElfRelocation>()
-        for (section in sectionHeaders) {
-            when (section.type) {
-                SHT_REL -> result += readRelEntries(buffer, bytes, section, programHeaders)
-                SHT_RELA -> result += readRelaEntries(buffer, bytes, section)
-            }
-        }
-        return result
-    }
-
-    /** Finds which PT_LOAD segment contains [vaddr] and returns the corresponding file offset, or null if none does. */
-    private fun vaddrToFileOffset(programHeaders: List<ElfProgramHeader>, vaddr: Long): Long? {
-        val ph = programHeaders.firstOrNull { it.isLoadable && vaddr >= it.vaddr && vaddr < it.vaddr + it.fileSize } ?: return null
-        return ph.offset + (vaddr - ph.vaddr)
-    }
-
-    private fun readRelEntries(
-        buffer: ByteBuffer,
-        bytes: ByteArray,
-        section: ElfSectionHeader,
-        programHeaders: List<ElfProgramHeader>
-    ): List<ElfRelocation> {
-        val entrySize = if (section.entSize > 0) section.entSize.toInt() else 8 // Elf32_Rel: offset(4) + info(4)
-        val count = (section.size / entrySize).toInt()
-        val result = ArrayList<ElfRelocation>(count)
-
-        for (i in 0 until count) {
-            val base = section.offset + i.toLong() * entrySize
-            if (base + 8 > bytes.size) break
-
-            buffer.position(base.toInt())
-            val offset = buffer.int.toLong() and 0xFFFFFFFFL
-            val info = buffer.int
-            val symIndex = (info ushr 8) and 0xFFFFFF
-            val type = info and 0xFF
-
-            // Elf32_Rel has no explicit addend field - it's implicit,
-            // read from whatever's already stored at the target vaddr.
-            val addend = vaddrToFileOffset(programHeaders, offset)?.let { fileOff ->
-                if (fileOff + 4 <= bytes.size) {
-                    ByteBuffer.wrap(bytes, fileOff.toInt(), 4).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xFFFFFFFFL
-                } else null
-            } ?: 0L
-
-            result += ElfRelocation(offset, type, symIndex, addend)
-        }
-        return result
-    }
-
-    private fun readRelaEntries(buffer: ByteBuffer, bytes: ByteArray, section: ElfSectionHeader): List<ElfRelocation> {
-        val entrySize = if (section.entSize > 0) section.entSize.toInt() else 12 // Elf32_Rela: offset(4) + info(4) + addend(4)
-        val count = (section.size / entrySize).toInt()
-        val result = ArrayList<ElfRelocation>(count)
-
-        for (i in 0 until count) {
-            val base = section.offset + i.toLong() * entrySize
-            if (base + 12 > bytes.size) break
-
-            buffer.position(base.toInt())
-            val offset = buffer.int.toLong() and 0xFFFFFFFFL
-            val info = buffer.int
-            val symIndex = (info ushr 8) and 0xFFFFFF
-            val type = info and 0xFF
-            val addend = buffer.int.toLong() and 0xFFFFFFFFL
-
-            result += ElfRelocation(offset, type, symIndex, addend)
-        }
-        return result
-    }
 
     private fun readNullTerminatedString(bytes: ByteArray, startOffset: Int): String {
         if (startOffset < 0 || startOffset >= bytes.size) return ""

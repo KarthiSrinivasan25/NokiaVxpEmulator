@@ -1,9 +1,6 @@
 package com.nokia.vxp.loader
 
 import com.nokia.vxp.utils.Constants
-import com.nokia.vxp.utils.Logger
-
-private const val TAG = "ModuleMapper"
 
 /** One contiguous region to be mapped into the emulated address space. */
 data class MappedRegion(
@@ -23,21 +20,17 @@ data class MappedRegion(
  * stack region placed safely after them. memory.MemoryManager consumes
  * this to actually set up Unicorn's mappings.
  *
- * ON ELF RELOCATIONS: this mapper loads every segment at its exact file
- * vaddr rather than rebasing anywhere else, which makes the LOAD BIAS
- * always zero - so R_ARM_RELATIVE-style relocations (which just add a
- * bias to an existing value) are genuinely no-ops under this strategy.
- * BUT relocation types that need an actual resolved SYMBOL VALUE
- * (R_ARM_ABS32, R_ARM_GLOB_DAT, R_ARM_JUMP_SLOT) are NOT no-ops - if
- * left unprocessed, the memory location they target simply stays
- * whatever was in the file (often zero), and guest code that
- * dereferences it as a pointer faults immediately. This was confirmed
- * as a real bug via an actual user session's logcat: a file with
- * symbols=0 (nothing found - a separate bug, since only .symtab was
- * being checked, not .dynsym too) faulted writing to guest address 0x0
- * only ~22 instructions after entry - the textbook signature of crt0's
- * .bss-zeroing loop running with an unresolved (still-zero) pointer.
- * applyRelocations() below now actually processes these.
+ * ON ELF RELOCATIONS: a real sample (gtrxAC/peanut.vxp, MIT licensed)
+ * turned out to be ET_DYN (position-independent) with .rel.dyn/.rel.plt
+ * sections present - normally that would mean relocations need
+ * processing at load time (e.g. R_ARM_RELATIVE entries adding a load
+ * bias to each patched address). This mapper deliberately loads every
+ * segment at its exact file vaddr rather than rebasing anywhere else,
+ * which makes the load bias always zero - so those relocations are
+ * no-ops under this strategy specifically, and can be safely skipped.
+ * This stops being true if this mapper is ever changed to load modules
+ * at a different/dynamic base address (e.g. to run several VXP modules
+ * side by side) - relocation processing would need to be added then.
  */
 data class ModuleMemoryLayout(
     val entryPoint: Long,
@@ -87,8 +80,6 @@ object ModuleMapper {
             )
         }
 
-        applyRelocations(segmentRegions, vxpFile.relocations, vxpFile.symbols)
-
         // Place heap/stack safely after the highest ELF segment, rather
         // than at fixed addresses that could collide with wherever the
         // real ELF's vaddrs actually land.
@@ -122,72 +113,5 @@ object ModuleMapper {
             isThumbEntry = vxpFile.header.isThumbEntry,
             regions = segmentRegions + heapRegion + stackRegion
         )
-    }
-
-    /**
-     * Applies relocations directly into each segment's initialContent
-     * byte array, in place, BEFORE mapping - so the correct resolved
-     * values are already there on the very first uc_mem_write, rather
-     * than needing a separate patch pass after mapping.
-     *
-     * Only the relocation types with well-defined, symbol-based
-     * semantics are handled: R_ARM_ABS32/GLOB_DAT/JUMP_SLOT (target =
-     * resolved symbol value + addend) and R_ARM_RELATIVE (target =
-     * addend + load bias, and load bias is always 0 here - see this
-     * file's top doc comment). Anything else is logged and skipped
-     * rather than guessed at.
-     */
-    private fun applyRelocations(segments: List<MappedRegion>, relocations: List<ElfRelocation>, symbols: List<ElfSymbol>) {
-        if (relocations.isEmpty()) return
-
-        var applied = 0
-        var skipped = 0
-
-        for (reloc in relocations) {
-            val value: Long? = when (reloc.type) {
-                ElfRelocation.R_ARM_ABS32, ElfRelocation.R_ARM_GLOB_DAT, ElfRelocation.R_ARM_JUMP_SLOT -> {
-                    val symbolValue = symbols.getOrNull(reloc.symbolIndex)?.value
-                    if (symbolValue == null) {
-                        Logger.w(TAG, "Relocation at 0x${reloc.offset.toString(16)} references symbol index ${reloc.symbolIndex}, which isn't in our (possibly incomplete) symbol list - skipping")
-                        null
-                    } else {
-                        symbolValue + reloc.addend
-                    }
-                }
-                ElfRelocation.R_ARM_RELATIVE -> reloc.addend // + load bias (always 0 under this mapper's strategy)
-                else -> {
-                    Logger.w(TAG, "Unhandled relocation type ${reloc.type} at 0x${reloc.offset.toString(16)} - skipping")
-                    null
-                }
-            }
-
-            if (value == null) {
-                skipped++
-                continue
-            }
-
-            val region = segments.firstOrNull { reloc.offset >= it.baseAddress && reloc.offset < it.baseAddress + it.size }
-            val content = region?.initialContent
-            if (region == null || content == null) {
-                Logger.w(TAG, "Relocation target 0x${reloc.offset.toString(16)} isn't inside any mapped segment - skipping")
-                skipped++
-                continue
-            }
-
-            val localOffset = (reloc.offset - region.baseAddress).toInt()
-            if (localOffset + 4 > content.size) {
-                Logger.w(TAG, "Relocation target 0x${reloc.offset.toString(16)} is too close to the end of segment '${region.name}' - skipping")
-                skipped++
-                continue
-            }
-
-            content[localOffset] = (value and 0xFF).toByte()
-            content[localOffset + 1] = ((value ushr 8) and 0xFF).toByte()
-            content[localOffset + 2] = ((value ushr 16) and 0xFF).toByte()
-            content[localOffset + 3] = ((value ushr 24) and 0xFF).toByte()
-            applied++
-        }
-
-        Logger.i(TAG, "Relocations: applied $applied, skipped $skipped (of ${relocations.size} total)")
     }
 }
