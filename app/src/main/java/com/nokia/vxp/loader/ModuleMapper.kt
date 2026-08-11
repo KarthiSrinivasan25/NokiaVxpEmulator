@@ -35,7 +35,28 @@ data class MappedRegion(
 data class ModuleMemoryLayout(
     val entryPoint: Long,
     val isThumbEntry: Boolean,
-    val regions: List<MappedRegion>
+    val regions: List<MappedRegion>,
+    /**
+     * Runtime base address for ARM RWPI (Read-Write Position Independence)
+     * data - the value R9 must hold before the entry point runs, or null
+     * if this module doesn't use RWPI (no ER_RW/ER_ZI sections found).
+     *
+     * Binaries built with the default ARM RVCT/armlink scatter-load
+     * layout (section names ER_RO/ER_RW/ER_ZI) link their writable-data
+     * section at virtual address 0 - it's not a real load address, it's
+     * a placeholder meaning "R9-relative". The entry point's own
+     * scatter-load startup code (a copy loop reading a small "region
+     * table" right after the entry point) computes each RW/ZI
+     * destination address as `offset + R9`, expecting the OS/loader to
+     * have pointed R9 at a real, writable runtime data area first. If R9
+     * is left at 0 (the CPU's power-on default), those destination
+     * addresses collapse down near address 0 - an unmapped guard page in
+     * our layout - and the very first scatter-load copy faults with an
+     * unmapped write, before a single line of the guest's actual game
+     * code has run. See emulator.Runtime.from(), which is what actually
+     * applies this to R9 via cpu.CpuState.
+     */
+    val staticBaseAddress: Long?
 ) {
     val heapRegion: MappedRegion get() = regions.first { it.name == "heap" }
     val stackRegion: MappedRegion get() = regions.first { it.name == "stack" }
@@ -84,7 +105,41 @@ object ModuleMapper {
         // than at fixed addresses that could collide with wherever the
         // real ELF's vaddrs actually land.
         val highestSegmentEnd = segmentRegions.maxOfOrNull { it.baseAddress + it.size } ?: 0L
-        val heapBase = alignUp(highestSegmentEnd + PAGE_SIZE) // one-page gap as a guard against off-by-one overruns
+
+        // ARM RWPI static-data region (ER_RW + ER_ZI), if this binary has
+        // one - see the doc comment on ModuleMemoryLayout.staticBaseAddress
+        // for the full "why". ER_RW's own file bytes are the *initial
+        // content* for that data (copied by the guest's own scatter-load
+        // routine at runtime, not by us - we only need to give it a real,
+        // writable destination to copy into); ER_ZI is purely zero-filled
+        // and needs no file bytes at all. Both are optional; a binary with
+        // neither (no writable globals) has no need for RWPI, no ER_RW/
+        // ER_ZI sections will exist, and staticBase stays null.
+        val erRwSection = vxpFile.sectionHeaders.firstOrNull { it.name == "ER_RW" }
+        val erZiSection = vxpFile.sectionHeaders.firstOrNull { it.name == "ER_ZI" }
+        val staticDataSize = (erRwSection?.size ?: 0L) + (erZiSection?.size ?: 0L)
+
+        val staticDataRegion = if (staticDataSize > 0L) {
+            MappedRegion(
+                name = "staticData",
+                baseAddress = alignUp(highestSegmentEnd + PAGE_SIZE),
+                size = alignUp(staticDataSize),
+                readable = true,
+                writable = true,
+                executable = false,
+                // Zero-filled: the guest's own __scatterload copy loop
+                // fills in ER_RW's real initial values at runtime by
+                // reading them from ROM (inside segment0, where they're
+                // already correctly present) and writing them here -
+                // pre-populating this region would just be overwritten.
+                initialContent = null
+            )
+        } else {
+            null
+        }
+        val afterStaticData = staticDataRegion?.let { it.baseAddress + it.size } ?: highestSegmentEnd
+
+        val heapBase = alignUp(afterStaticData + PAGE_SIZE) // one-page gap as a guard against off-by-one overruns
         val heapSize = alignUp(Constants.DEFAULT_HEAP_SIZE)
         val stackBase = alignUp(heapBase + heapSize + PAGE_SIZE)
         val stackSize = alignUp(Constants.DEFAULT_STACK_SIZE)
@@ -111,7 +166,8 @@ object ModuleMapper {
         return ModuleMemoryLayout(
             entryPoint = vxpFile.header.realEntryAddress,
             isThumbEntry = vxpFile.header.isThumbEntry,
-            regions = segmentRegions + heapRegion + stackRegion
+            regions = segmentRegions + listOfNotNull(staticDataRegion) + heapRegion + stackRegion,
+            staticBaseAddress = staticDataRegion?.baseAddress
         )
     }
 }

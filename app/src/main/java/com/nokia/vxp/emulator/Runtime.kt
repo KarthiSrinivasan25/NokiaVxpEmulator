@@ -3,6 +3,7 @@ package com.nokia.vxp.emulator
 import com.nokia.vxp.cpu.CpuState
 import com.nokia.vxp.cpu.Executor
 import com.nokia.vxp.cpu.Flags
+import com.nokia.vxp.cpu.Registers
 import com.nokia.vxp.loader.LoadResult
 import com.nokia.vxp.memory.MemoryManager
 import com.nokia.vxp.utils.Logger
@@ -47,6 +48,18 @@ class Runtime private constructor(
                 val cpsrWithThumb = Flags.withBit(cpuState.getCpsr(), Flags.BIT_T, true)
                 cpuState.setCpsr(cpsrWithThumb)
                 Logger.i(TAG, "Entry point is Thumb-mode - set CPSR T bit")
+            }
+            loadResult.memoryLayout.staticBaseAddress?.let { staticBase ->
+                // ARM RWPI (Read-Write Position Independence): the entry
+                // point's own scatter-load startup code expects R9 to
+                // already point at a real, writable runtime address for
+                // this module's global/static data before it runs a
+                // single instruction - see ModuleMemoryLayout.staticBaseAddress's
+                // doc comment for the full explanation. Without this, the
+                // very first ER_RW/ER_ZI scatter-load copy resolves its
+                // destination address near 0 and faults immediately.
+                cpuState.setRegister(Registers.R9, staticBase)
+                Logger.i(TAG, "RWPI static base detected - R9 set to 0x${staticBase.toString(16)}")
             }
 
             val executor = Executor(memoryManager, cpuState)
