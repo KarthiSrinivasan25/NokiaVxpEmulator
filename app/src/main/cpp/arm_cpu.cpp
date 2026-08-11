@@ -23,6 +23,31 @@ inline int32_t signExtend(uint32_t value, int fromBits) {
 } // namespace
 
 // ---------------------------------------------------------------------------
+// Bus wrappers - see the doc comment on these in arm_cpu.h. Every exec*()
+// function below calls these instead of bus_ directly so lastFaultAddress_
+// always reflects the real data address a read/write fault happened at,
+// not just the instruction's own PC.
+// ---------------------------------------------------------------------------
+
+bool ArmCpu::doRead(uint32_t address, uint8_t* out, size_t len, ArmFault* fault) {
+    if (bus_->read(address, out, len, fault)) return true;
+    lastFaultAddress_ = address;
+    return false;
+}
+
+bool ArmCpu::doWrite(uint32_t address, const uint8_t* data, size_t len, ArmFault* fault) {
+    if (bus_->write(address, data, len, fault)) return true;
+    lastFaultAddress_ = address;
+    return false;
+}
+
+bool ArmCpu::doFetch(uint32_t address, uint8_t* out, size_t len, ArmFault* fault) {
+    if (bus_->fetch(address, out, len, fault)) return true;
+    lastFaultAddress_ = address;
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // Register access. PC reads as address-of-current-instruction + 8 (ARM) or
 // +4 (Thumb) per the classic ARM7TDMI pipeline convention that real guest
 // code (and plenty of ROM/relocation math) is written to expect.
@@ -119,7 +144,7 @@ ArmFault ArmCpu::stepArm() {
 
     uint8_t raw[4];
     ArmFault fault = ArmFault::None;
-    if (!bus_->fetch(pc, raw, 4, &fault)) return fault;
+    if (!doFetch(pc, raw, 4, &fault)) return fault;
     uint32_t insn = static_cast<uint32_t>(raw[0]) | (static_cast<uint32_t>(raw[1]) << 8) |
                      (static_cast<uint32_t>(raw[2]) << 16) | (static_cast<uint32_t>(raw[3]) << 24);
 
@@ -368,7 +393,7 @@ ArmFault ArmCpu::execSingleDataTransfer(uint32_t insn) {
     if (isLoad) {
         uint8_t buf[4] = {0, 0, 0, 0};
         size_t len = byteTransfer ? 1 : 4;
-        if (!bus_->read(transferAddress, buf, len, &fault)) return fault;
+        if (!doRead(transferAddress, buf, len, &fault)) return fault;
         uint32_t value = byteTransfer ? buf[0]
             : (static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24));
@@ -382,7 +407,7 @@ ArmFault ArmCpu::execSingleDataTransfer(uint32_t insn) {
             static_cast<uint8_t>((value >> 24) & 0xFF)
         };
         size_t len = byteTransfer ? 1 : 4;
-        if (!bus_->write(transferAddress, buf, len, &fault)) return fault;
+        if (!doWrite(transferAddress, buf, len, &fault)) return fault;
     }
 
     if (!preIndex || writeback) {
@@ -421,15 +446,15 @@ ArmFault ArmCpu::execHalfwordSignedTransfer(uint32_t insn) {
         uint32_t value = 0;
         if (sh == 0b01) { // unsigned halfword
             uint8_t buf[2];
-            if (!bus_->read(transferAddress, buf, 2, &fault)) return fault;
+            if (!doRead(transferAddress, buf, 2, &fault)) return fault;
             value = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8);
         } else if (sh == 0b10) { // signed byte
             uint8_t buf[1];
-            if (!bus_->read(transferAddress, buf, 1, &fault)) return fault;
+            if (!doRead(transferAddress, buf, 1, &fault)) return fault;
             value = static_cast<uint32_t>(signExtend(buf[0], 8));
         } else { // 0b11 signed halfword
             uint8_t buf[2];
-            if (!bus_->read(transferAddress, buf, 2, &fault)) return fault;
+            if (!doRead(transferAddress, buf, 2, &fault)) return fault;
             uint32_t h = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8);
             value = static_cast<uint32_t>(signExtend(h, 16));
         }
@@ -438,7 +463,7 @@ ArmFault ArmCpu::execHalfwordSignedTransfer(uint32_t insn) {
         // STRH only (signed store forms aren't defined by the ISA)
         uint32_t value = getReg(rd);
         uint8_t buf[2] = { static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF) };
-        if (!bus_->write(transferAddress, buf, 2, &fault)) return fault;
+        if (!doWrite(transferAddress, buf, 2, &fault)) return fault;
     }
 
     if (!preIndex || writeback) {
@@ -474,7 +499,7 @@ ArmFault ArmCpu::execBlockDataTransfer(uint32_t insn) {
         if (!bit(regList, i)) continue;
         if (isLoad) {
             uint8_t buf[4];
-            if (!bus_->read(address, buf, 4, &fault)) return fault;
+            if (!doRead(address, buf, 4, &fault)) return fault;
             uint32_t value = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                               (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24);
             if (i == ARM_PC) r_[ARM_PC] = value & ~1u; else r_[i] = value;
@@ -484,7 +509,7 @@ ArmFault ArmCpu::execBlockDataTransfer(uint32_t insn) {
                 static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF),
                 static_cast<uint8_t>((value >> 16) & 0xFF), static_cast<uint8_t>((value >> 24) & 0xFF)
             };
-            if (!bus_->write(address, buf, 4, &fault)) return fault;
+            if (!doWrite(address, buf, 4, &fault)) return fault;
         }
         address += 4;
     }
@@ -527,7 +552,7 @@ ArmFault ArmCpu::stepThumb() {
 
     uint8_t raw[2];
     ArmFault fault = ArmFault::None;
-    if (!bus_->fetch(pc, raw, 2, &fault)) return fault;
+    if (!doFetch(pc, raw, 2, &fault)) return fault;
     uint16_t insn = static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8);
     return execThumb(insn);
 }
@@ -592,7 +617,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
             if (!bit(regList, i)) continue;
             if (isLoad) {
                 uint8_t buf[4];
-                if (!bus_->read(address, buf, 4, &fault)) return fault;
+                if (!doRead(address, buf, 4, &fault)) return fault;
                 r_[i] = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                         (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24);
             } else {
@@ -601,7 +626,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
                     static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF),
                     static_cast<uint8_t>((value >> 16) & 0xFF), static_cast<uint8_t>((value >> 24) & 0xFF)
                 };
-                if (!bus_->write(address, buf, 4, &fault)) return fault;
+                if (!doWrite(address, buf, 4, &fault)) return fault;
             }
             address += 4;
         }
@@ -621,14 +646,14 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
             for (int i = 0; i < 8; i++) {
                 if (!bit(regList, i)) continue;
                 uint8_t buf[4];
-                if (!bus_->read(address, buf, 4, &fault)) return fault;
+                if (!doRead(address, buf, 4, &fault)) return fault;
                 r_[i] = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                         (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24);
                 address += 4;
             }
             if (includePcLr) {
                 uint8_t buf[4];
-                if (!bus_->read(address, buf, 4, &fault)) return fault;
+                if (!doRead(address, buf, 4, &fault)) return fault;
                 uint32_t value = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                                   (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24);
                 r_[ARM_PC] = value & ~1u;
@@ -650,7 +675,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
                     static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF),
                     static_cast<uint8_t>((value >> 16) & 0xFF), static_cast<uint8_t>((value >> 24) & 0xFF)
                 };
-                if (!bus_->write(writeAddr, buf, 4, &fault)) return fault;
+                if (!doWrite(writeAddr, buf, 4, &fault)) return fault;
                 writeAddr += 4;
             }
             if (includePcLr) {
@@ -659,7 +684,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
                     static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF),
                     static_cast<uint8_t>((value >> 16) & 0xFF), static_cast<uint8_t>((value >> 24) & 0xFF)
                 };
-                if (!bus_->write(writeAddr, buf, 4, &fault)) return fault;
+                if (!doWrite(writeAddr, buf, 4, &fault)) return fault;
             }
             r_[ARM_SP] = address;
             r_[ARM_PC] = pc + 2;
@@ -697,7 +722,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
         ArmFault fault = ArmFault::None;
         if (isLoad) {
             uint8_t buf[4];
-            if (!bus_->read(address, buf, 4, &fault)) return fault;
+            if (!doRead(address, buf, 4, &fault)) return fault;
             r_[rd] = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                      (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24);
         } else {
@@ -706,7 +731,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
                 static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF),
                 static_cast<uint8_t>((value >> 16) & 0xFF), static_cast<uint8_t>((value >> 24) & 0xFF)
             };
-            if (!bus_->write(address, buf, 4, &fault)) return fault;
+            if (!doWrite(address, buf, 4, &fault)) return fault;
         }
         r_[ARM_PC] = pc + 2;
         return ArmFault::None;
@@ -722,12 +747,12 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
         ArmFault fault = ArmFault::None;
         if (isLoad) {
             uint8_t buf[2];
-            if (!bus_->read(address, buf, 2, &fault)) return fault;
+            if (!doRead(address, buf, 2, &fault)) return fault;
             r_[rd] = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8);
         } else {
             uint32_t value = r_[rd];
             uint8_t buf[2] = { static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF) };
-            if (!bus_->write(address, buf, 2, &fault)) return fault;
+            if (!doWrite(address, buf, 2, &fault)) return fault;
         }
         r_[ARM_PC] = pc + 2;
         return ArmFault::None;
@@ -746,7 +771,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
         if (isLoad) {
             size_t len = byteTransfer ? 1 : 4;
             uint8_t buf[4] = {0, 0, 0, 0};
-            if (!bus_->read(address, buf, len, &fault)) return fault;
+            if (!doRead(address, buf, len, &fault)) return fault;
             r_[rd] = byteTransfer ? buf[0]
                 : (static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                    (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24));
@@ -757,7 +782,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
                 static_cast<uint8_t>((value >> 16) & 0xFF), static_cast<uint8_t>((value >> 24) & 0xFF)
             };
             size_t len = byteTransfer ? 1 : 4;
-            if (!bus_->write(address, buf, len, &fault)) return fault;
+            if (!doWrite(address, buf, len, &fault)) return fault;
         }
         r_[ARM_PC] = pc + 2;
         return ArmFault::None;
@@ -779,7 +804,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
             if (bitL) {
                 size_t len = bitB ? 1 : 4;
                 uint8_t buf[4] = {0, 0, 0, 0};
-                if (!bus_->read(address, buf, len, &fault)) return fault;
+                if (!doRead(address, buf, len, &fault)) return fault;
                 r_[rd] = bitB ? buf[0]
                     : (static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                        (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24));
@@ -790,7 +815,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
                     static_cast<uint8_t>((value >> 16) & 0xFF), static_cast<uint8_t>((value >> 24) & 0xFF)
                 };
                 size_t len = bitB ? 1 : 4;
-                if (!bus_->write(address, buf, len, &fault)) return fault;
+                if (!doWrite(address, buf, len, &fault)) return fault;
             }
         } else {
             // Format 8: STRH/LDRH/LDSB/LDSH, selected by (bitB,bitL) = (H,S) pair semantics:
@@ -801,18 +826,18 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
             if (!hFlag && !sFlag) { // STRH
                 uint32_t value = r_[rd];
                 uint8_t buf[2] = { static_cast<uint8_t>(value & 0xFF), static_cast<uint8_t>((value >> 8) & 0xFF) };
-                if (!bus_->write(address, buf, 2, &fault)) return fault;
+                if (!doWrite(address, buf, 2, &fault)) return fault;
             } else if (!hFlag && sFlag) { // LDSB
                 uint8_t buf[1];
-                if (!bus_->read(address, buf, 1, &fault)) return fault;
+                if (!doRead(address, buf, 1, &fault)) return fault;
                 r_[rd] = static_cast<uint32_t>(signExtend(buf[0], 8));
             } else if (hFlag && !sFlag) { // LDRH
                 uint8_t buf[2];
-                if (!bus_->read(address, buf, 2, &fault)) return fault;
+                if (!doRead(address, buf, 2, &fault)) return fault;
                 r_[rd] = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8);
             } else { // LDSH
                 uint8_t buf[2];
-                if (!bus_->read(address, buf, 2, &fault)) return fault;
+                if (!doRead(address, buf, 2, &fault)) return fault;
                 uint32_t h = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8);
                 r_[rd] = static_cast<uint32_t>(signExtend(h, 16));
             }
@@ -828,7 +853,7 @@ ArmFault ArmCpu::execThumb(uint16_t insn) {
         uint32_t address = ((pc + 4) & ~3u) + (imm8 << 2);
         uint8_t buf[4];
         ArmFault fault = ArmFault::None;
-        if (!bus_->read(address, buf, 4, &fault)) return fault;
+        if (!doRead(address, buf, 4, &fault)) return fault;
         r_[rd] = static_cast<uint32_t>(buf[0]) | (static_cast<uint32_t>(buf[1]) << 8) |
                  (static_cast<uint32_t>(buf[2]) << 16) | (static_cast<uint32_t>(buf[3]) << 24);
         r_[ARM_PC] = pc + 2;

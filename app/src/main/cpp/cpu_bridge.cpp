@@ -129,10 +129,20 @@ VxpErr vxp_run(VxpEngine* engine, uint64_t startAddress, uint64_t endAddress,
 
         if (fault != ArmFault::None) {
             VxpErr err = faultToErr(fault);
+            // Fetch faults happen AT the instruction address (PC); read/
+            // write faults happen at whatever data address the faulting
+            // LDR/STR/LDM/STM actually targeted, which is very often a
+            // different address from PC - use lastFaultAddress() for
+            // those, or the log just repeats the instruction location and
+            // looks like "it faulted writing to itself", which is
+            // virtually never actually what happened.
+            bool isFetchFault = (fault == ArmFault::FetchUnmapped || fault == ArmFault::FetchProt);
+            uint32_t reportAddress = isFetchFault ? faultPc : engine->cpu.lastFaultAddress();
             if (engine->invalidHook != nullptr) {
-                engine->invalidHook(engine, err, faultPc, 4, engine->invalidHookUserData);
+                engine->invalidHook(engine, err, reportAddress, 4, engine->invalidHookUserData);
             }
-            LOGE("vxp_run: stopped with %s at pc=0x%x", vxp_strerror(err), faultPc);
+            LOGE("vxp_run: stopped with %s at pc=0x%x (fault address=0x%x)",
+                 vxp_strerror(err), faultPc, reportAddress);
             return err;
         }
 
@@ -159,10 +169,13 @@ VxpErr vxp_step(VxpEngine* engine) {
 
         if (fault != ArmFault::None) {
             VxpErr err = faultToErr(fault);
+            bool isFetchFault = (fault == ArmFault::FetchUnmapped || fault == ArmFault::FetchProt);
+            uint32_t reportAddress = isFetchFault ? faultPc : engine->cpu.lastFaultAddress();
             if (engine->invalidHook != nullptr) {
-                engine->invalidHook(engine, err, faultPc, 4, engine->invalidHookUserData);
+                engine->invalidHook(engine, err, reportAddress, 4, engine->invalidHookUserData);
             }
-            LOGE("vxp_step: failed with %s at pc=0x%x", vxp_strerror(err), faultPc);
+            LOGE("vxp_step: failed with %s at pc=0x%x (fault address=0x%x)",
+                 vxp_strerror(err), faultPc, reportAddress);
             return err;
         }
         return VXP_ERR_OK;

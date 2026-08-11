@@ -91,6 +91,18 @@ public:
     // "what a guest instruction sees when it reads R15" value.
     uint32_t rawPc() const { return r_[ARM_PC]; }
 
+    // The guest address that caused the most recent fault, when stepOne()
+    // returned anything other than ArmFault::None. For a fetch fault this
+    // is the same as rawPc() (the instruction couldn't be fetched at
+    // all); for a read/write fault it's the actual data address the
+    // faulting LDR/STR/LDM/STM/etc. tried to access, which is often
+    // *different* from PC - callers (cpu_bridge.cpp's diagnostics hook)
+    // should use this instead of rawPc() when reporting read/write
+    // faults, or the logged address is just the instruction location,
+    // not where the bad access actually happened. Meaningless (stale)
+    // after a step that didn't fault.
+    uint32_t lastFaultAddress() const { return lastFaultAddress_; }
+
     // Executes exactly one instruction at the current PC (ARM or Thumb,
     // per the CPSR T bit). Returns the fault that stopped execution, or
     // ArmFault::None on a normal single-instruction step. On a fault,
@@ -102,6 +114,17 @@ private:
     ArmMemoryBus* bus_;
     uint32_t r_[16] = {0};
     uint32_t cpsr_ = 0x10; // User mode, ARM state, all flags clear
+    uint32_t lastFaultAddress_ = 0;
+
+    // Thin wrappers around bus_->read/write/fetch that additionally
+    // record the exact address a failing access was attempted at into
+    // lastFaultAddress_, so a caller further up (cpu_bridge.cpp) can
+    // report *where* a read/write fault actually happened instead of
+    // just which instruction triggered it. Every exec*() function goes
+    // through these rather than calling bus_ directly.
+    bool doRead(uint32_t address, uint8_t* out, size_t len, ArmFault* fault);
+    bool doWrite(uint32_t address, const uint8_t* data, size_t len, ArmFault* fault);
+    bool doFetch(uint32_t address, uint8_t* out, size_t len, ArmFault* fault);
 
     // --- condition / flag helpers ---
     bool conditionPassed(uint32_t cond) const;
